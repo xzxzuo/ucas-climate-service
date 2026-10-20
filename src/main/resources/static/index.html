@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>气象指标分析与查询</title>
+<style>
+body{font:15px/1.6 system-ui,sans-serif;background:#f3f6f8;color:#18313f;margin:0}main{max-width:1120px;margin:36px auto;padding:0 22px}h1{font-size:28px;margin-bottom:4px}p{color:#526773}.card{background:white;border:1px solid #dbe3e8;border-radius:12px;padding:22px;margin:18px 0}.controls{display:flex;gap:14px;flex-wrap:wrap;align-items:end}label{display:flex;flex-direction:column;gap:5px;color:#526773}input,select,button,a.action{font:inherit;padding:9px 12px;border:1px solid #b8c9d1;border-radius:6px;background:white}button,a.action{background:#12656c;color:white;border:0;cursor:pointer;text-decoration:none}button:hover{background:#0b5056}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px}td,th{text-align:left;padding:10px;border-bottom:1px solid #e4ebef;white-space:nowrap}th{background:#f3f7f8}#status{padding:10px 0;color:#12656c}#error{color:#a33229;white-space:pre-wrap}.badge{font-size:12px;background:#e5f2ee;padding:4px 8px;border-radius:4px}code{font-size:13px}details{margin-top:14px}footer{color:#647985;font-size:13px;margin:22px 0}
+</style>
+<main>
+<h1>气象指标分析与查询</h1>
+<p>中科院实习复建 · 真实数据抽样 · MySQL / Spring Boot / MyBatis / Redis</p>
+<div class="card"><div class="controls"><label>接口密钥<input id="apiKey" type="password" autocomplete="off" placeholder="粘贴 .runtime/auth.env 中的只读或管理员密钥"></label><button id="connect">连接 / 更换密钥</button><button id="disconnect">清除密钥</button></div><p>密钥只保存在当前页面内存中，不写入 URL、Cookie 或浏览器存储；刷新后需要重新输入。</p><div id="meta">请先输入接口密钥。</div><p>温度：°F；降水：英寸；湿度：0–1。基准期 1973–1992。年度频次表示非零观测天数。</p>
+<div class="controls">
+<label>站点<select id="station"></select></label>
+<label>开始日期<input id="from" type="date" value="1993-01-01"></label>
+<label>结束日期（不含）<input id="to" type="date" value="1994-01-01"></label>
+<button id="threshold">基准阈值</button><button id="daily">逐日指标</button><a class="action" id="export">导出 CSV</a>
+</div></div>
+<div class="card"><div class="controls">
+<label>汇总层级<select id="level"><option>COUNTRY</option><option>PROVINCE</option><option>CITY</option><option>DISTRICT</option></select></label>
+<label>指标<select id="metric"></select></label><label>年份<input id="year" type="number" value="1993" min="1993" max="2100"></label>
+<button id="regionDay">地区逐日统计</button><button id="regionYear">地区年度频次</button><button id="stationYear">站点年度频次</button>
+</div><p>地区汇总按当前站点所在国家筛选；日统计支持 7 项幅度指标，年统计另含 6 项天气标记。</p></div>
+<div class="card"><details><summary>管理员：增量导入任务</summary><p>需要管理员密钥。自动调度默认关闭；手动扫描只读取 data/incremental 下已稳定的标准化 CSV。</p><div class="controls"><button id="jobStatus">任务状态</button><button id="jobHistory">文件处理记录</button><button id="runIncremental">扫描一次</button><button id="retryIncremental">重试失败文件</button></div></details></div>
+<div class="card"><div id="status">选择查询查看结果。</div><div id="error"></div><div id="results" class="scroll"></div><details><summary>查看原始 JSON</summary><pre id="json" class="scroll"></pre></details></div>
+<footer>本数据集采用有读取上限的站点抽样，适合复现与验证接口，不能据此推断全国或全球气候。</footer>
+</main>
+<script>
+const $=id=>document.getElementById(id);let stations=[],apiKey='';
+async function apiFetch(path,options={}){if(!apiKey)throw Error('请先填写接口密钥并点击连接');return fetch(path,{...options,headers:{...options.headers,'X-API-Key':apiKey}})}
+function draw(value){const rows=Array.isArray(value)?value:value.items||[value];$('results').replaceChildren();if(!rows.length){$('results').textContent='没有符合条件的数据';return}const table=document.createElement('table'),head=document.createElement('tr');Object.keys(rows[0]).forEach(k=>{const th=document.createElement('th');th.textContent=k;head.append(th)});table.append(head);rows.forEach(r=>{const tr=document.createElement('tr');Object.values(r).forEach(v=>{const td=document.createElement('td');td.textContent=v==null?'缺失':String(v);tr.append(td)});table.append(tr)});$('results').append(table)}
+async function request(path,method='GET'){$('error').textContent='';$('status').textContent='正在查询…';const start=performance.now();try{const r=await apiFetch(path,{method}),v=await r.json();if(!r.ok)throw Error(v.message||v.error);$('status').textContent=`${Math.round(performance.now()-start)} ms · 缓存 ${r.headers.get('X-Cache')||'不适用'} · 请求 ${r.headers.get('X-Request-Id')}`;$('json').textContent=JSON.stringify(v,null,2);draw(v)}catch(e){$('status').textContent='查询未完成';$('error').textContent=e.message}}
+function dates(){return new URLSearchParams({from:$('from').value,to:$('to').value})}function updateExport(){$('export').href='/api/exports/daily.csv?'+new URLSearchParams({station:$('station').value,...Object.fromEntries(dates())})}
+$('threshold').onclick=()=>request(`/api/stations/${$('station').value}/thresholds`);
+$('daily').onclick=()=>request(`/api/stations/${$('station').value}/indicators?${dates()}&limit=30`);
+$('stationYear').onclick=()=>request(`/api/stations/${$('station').value}/annual?year=${$('year').value}`);
+function region(annual){const s=stations.find(s=>s.stationCode===$('station').value),p=new URLSearchParams({level:$('level').value,metric:$('metric').value,country:s?.country||''});p.set(annual?'year':'date',annual?$('year').value:$('from').value);request(`/api/aggregates/${annual?'annual':'daily'}?${p}`)}
+$('regionDay').onclick=()=>region(false);$('regionYear').onclick=()=>region(true);
+['station','from','to'].forEach(id=>$(id).onchange=updateExport);
+['LTD','HTD','HR','EHR','LH','HTD1','CTD1','FOG','RAIN','SNOW','HAIL','THUNDER','TORNADO'].forEach(m=>{const o=document.createElement('option');o.textContent=m;$('metric').append(o)});$('metric').value='HTD';
+async function connect(){apiKey=$('apiKey').value.trim();$('apiKey').value='';$('error').textContent='';try{const responses=await Promise.all([apiFetch('/api/meta'),apiFetch('/api/stations')]);if(responses.some(r=>!r.ok))throw Error('密钥无效或服务未准备好，请重新填写');const [m,s]=await Promise.all(responses.map(r=>r.json()));if(!Array.isArray(s))throw Error('数据库尚未准备好');stations=s;$('station').replaceChildren();const a=m.analysis;$('meta').textContent=`原始观测 ${a.rawRows} 条 · 分析日指标 ${a.analysisRows} 条 · 缺基准观测 ${a.missingThresholdRows} 条 · 计算版本 ${a.revision}`;s.forEach(s=>{const o=document.createElement('option');o.value=s.stationCode;o.textContent=`${s.stationCode} · ${s.name} · ${s.country}`;$('station').append(o)});$('station').value=s.find(s=>s.country==='中国')?.stationCode||s[0]?.stationCode||'';updateExport();$('status').textContent='已连接，可查询数据。'}catch(e){apiKey='';$('meta').textContent='尚未连接';$('error').textContent=e.message}}
+$('connect').onclick=connect;
+$('disconnect').onclick=()=>{apiKey='';stations=[];$('apiKey').value='';$('station').replaceChildren();$('meta').textContent='密钥已清除';$('results').replaceChildren();$('json').textContent='';$('error').textContent='';$('status').textContent='尚未连接';};
+$('export').onclick=async event=>{event.preventDefault();try{const response=await apiFetch($('export').getAttribute('href'));if(!response.ok){const error=await response.json();throw Error(error.message||error.error)}const url=URL.createObjectURL(await response.blob()),link=document.createElement('a');link.href=url;link.download='climate-'+$('station').value+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){$('error').textContent=e.message}};
+$('jobStatus').onclick=()=>request('/api/admin/incremental/status');
+$('jobHistory').onclick=()=>request('/api/admin/incremental/jobs');
+$('runIncremental').onclick=()=>request('/api/admin/incremental/run','POST');
+$('retryIncremental').onclick=()=>{if(confirm('以管理员权限重试本轮扫描到的失败文件，忽略退避和重试次数限制？'))request('/api/admin/incremental/run?retryFailed=true','POST')};
+</script>
+</html>

@@ -1,0 +1,8 @@
+.runtime
+.cache
+target
+data
+docs
+.git
+.env
+.env.*

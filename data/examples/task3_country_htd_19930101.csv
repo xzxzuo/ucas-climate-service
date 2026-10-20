@@ -1,0 +1,2 @@
+﻿date,level,country,province,city,district,metric,avgValue,minValue,maxValue,medianValue,validStationCount
+1993-01-01,COUNTRY,中国,,,,HTD,0E-10,0E-10,0E-10,0E-10,1

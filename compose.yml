@@ -1,0 +1,53 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: climate_rebuild
+      MYSQL_USER: climate
+      MYSQL_PASSWORD: ${DB_PASSWORD:-climate-local}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root-local-development}
+    ports: ["127.0.0.1:13306:3306"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./scripts/docker-init.sql:/docker-entrypoint-initdb.d/test.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7.4
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:16379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  app:
+    build: .
+    ports: ["127.0.0.1:8087:8087"]
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      DB_URL: jdbc:mysql://mysql:3306/climate_rebuild?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&rewriteBatchedStatements=true
+      DB_USER: climate
+      DB_PASSWORD: ${DB_PASSWORD:-climate-local}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CLIMATE_READ_KEY: ${CLIMATE_READ_KEY:?Set CLIMATE_READ_KEY; see scripts/local_auth.py}
+      CLIMATE_ADMIN_KEY: ${CLIMATE_ADMIN_KEY:?Set CLIMATE_ADMIN_KEY; see scripts/local_auth.py}
+      CLIMATE_PLATFORM_ADMIN_PASSWORD: ${CLIMATE_PLATFORM_ADMIN_PASSWORD:?Run python3 scripts/local_auth.py}
+      CLIMATE_PLATFORM_DIRECTORY: /app/.runtime/platform
+      CLIMATE_PLATFORM_INBOX_ENABLED: ${CLIMATE_PLATFORM_INBOX_ENABLED:-false}
+      CLIMATE_INCREMENTAL_ENABLED: ${CLIMATE_INCREMENTAL_ENABLED:-false}
+      CLIMATE_INCREMENTAL_DIRECTORY: /app/data/incremental
+      CLIMATE_INCREMENTAL_DELAY_MS: ${CLIMATE_INCREMENTAL_DELAY_MS:-60000}
+    command: ["--app.import-file=/app/data/sample.csv", "--app.import-if-empty"]
+    volumes: ["./data:/app/data:ro", "platform-data:/app/.runtime/platform"]
+    stop_grace_period: 40s
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+volumes:
+  mysql-data:
+  platform-data:

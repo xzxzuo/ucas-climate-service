@@ -1,0 +1,24 @@
+{
+  "verified_at": "2026-10-17T16:15:34.511546+00:00",
+  "status": "PASS",
+  "assertions": 11895,
+  "source_rows": 26004,
+  "daily_rows": 4185,
+  "stations": [
+    "07027099999",
+    "38880099999",
+    "57328099999"
+  ],
+  "checks": [
+    "all station thresholds",
+    "up to 200 daily records per station, 13 metrics",
+    "all station-year counts",
+    "all sampled region levels yearly mean/min/max/median",
+    "daily region statistics",
+    "real Redis HIT",
+    "validation and admin protection",
+    "bound SQL values",
+    "CSV row count"
+  ],
+  "warning": "sample verification does not establish correctness or performance on the full 45 GB dataset"
+}

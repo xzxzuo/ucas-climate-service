@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: ${DB_TEST_URL:jdbc:mysql://127.0.0.1:13306/climate_rebuild_test?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&rewriteBatchedStatements=true}
+app:
+  platform:
+    worker-enabled: false
+    admin-password: test-platform-admin-password-2026
+    directory: target/platform-test-data
+  auth:
+    reader-key: test-reader-key-at-least-32-characters
+    admin-key: test-admin-key-at-least-32-characters
+  incremental:
+    enabled: false
+  min-baseline-samples: 2
+  cache-namespace: climate-rebuild-test

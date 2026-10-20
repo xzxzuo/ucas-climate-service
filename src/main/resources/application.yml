@@ -1,0 +1,88 @@
+server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
+  port: ${SERVER_PORT:8087}
+  shutdown: graceful
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        same-site: lax
+spring:
+  servlet:
+    multipart:
+      max-file-size: 8MB
+      max-request-size: 9MB
+  application:
+    name: ucas-climate-service
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:13306/climate_rebuild?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC&rewriteBatchedStatements=true}
+    username: ${DB_USER:climate}
+    password: ${DB_PASSWORD:climate-local}
+    hikari:
+      maximum-pool-size: 6
+      connection-init-sql: SET time_zone = '+00:00'
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:16379}
+      timeout: 400ms
+      connect-timeout: 400ms
+  flyway:
+    enabled: true
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+  task:
+    scheduling:
+      pool:
+        size: 1
+      thread-name-prefix: climate-incremental-
+      shutdown:
+        await-termination: true
+        await-termination-period: 30s
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    call-setters-on-nulls: true
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  health:
+    redis:
+      enabled: false
+app:
+  platform:
+    admin-password: ${CLIMATE_PLATFORM_ADMIN_PASSWORD:}
+    directory: ${CLIMATE_PLATFORM_DIRECTORY:.runtime/platform}
+    worker-enabled: ${CLIMATE_PLATFORM_WORKER_ENABLED:true}
+    poll-delay-ms: 750
+    inbox-enabled: ${CLIMATE_PLATFORM_INBOX_ENABLED:false}
+    inbox-min-age-ms: ${CLIMATE_PLATFORM_INBOX_MIN_AGE_MS:30000}
+    inbox-delay-ms: 10000
+  auth:
+    reader-key: ${CLIMATE_READ_KEY:}
+    admin-key: ${CLIMATE_ADMIN_KEY:}
+  incremental:
+    enabled: ${CLIMATE_INCREMENTAL_ENABLED:false}
+    directory: ${CLIMATE_INCREMENTAL_DIRECTORY:data/incremental}
+    fixed-delay-ms: ${CLIMATE_INCREMENTAL_DELAY_MS:60000}
+    initial-delay-ms: ${CLIMATE_INCREMENTAL_INITIAL_DELAY_MS:30000}
+    min-file-age-ms: ${CLIMATE_INCREMENTAL_MIN_AGE_MS:30000}
+    max-file-bytes: 8388608
+    max-files-per-run: 5
+    max-inbox-files: 500
+    max-attempts: 3
+    retry-delay-seconds: 60
+  cache-enabled: ${CACHE_ENABLED:true}
+  cache-ttl-seconds: 1800
+  min-baseline-samples: ${MIN_BASELINE_SAMPLES:30}
+  max-import-rows: 200000
+logging:
+  file:
+    name: .runtime/logs/climate.log
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{requestId:-}] %logger{28} - %msg%n"
