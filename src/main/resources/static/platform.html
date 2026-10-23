@@ -5,13 +5,13 @@
   <div class="login-story"><div class="brand-mark">C<span>°</span></div><p class="eyebrow">CLIMATE LAB / RESEARCH WORKSPACE</p><h1>让气象数据<br>成为可追溯的研究结果。</h1><p>从原始观测、指标计算，到结果分析与共享。<br>一个清晰、可靠的课题组工作空间。</p><div class="story-note"><span class="live-dot"></span> 数据集隔离 · 版本化计算 · 任务追踪</div></div>
   <div class="login-card"><p class="eyebrow">欢迎回来</p><h2>登录研究工作台</h2><p class="muted">使用管理员为你创建的账号。</p>
     <form id="login-form"><label>用户名<input id="username" name="username" autocomplete="username" required maxlength="40" placeholder="例如 admin"></label><label>密码<input id="password" name="password" type="password" autocomplete="current-password" required></label><button class="primary full" type="submit">进入工作台 <span>→</span></button></form>
-    <p id="login-error" class="error" role="alert"></p><div class="login-help">首次使用？在项目目录运行<br><code>python3 scripts/platform.py credentials</code><br>获取本机初始管理员账号。密码不会自动显示在页面上。</div><a class="subtle-link" href="/index.html">打开原有 API Key 查询演示 ↗</a>
+    <p id="login-error" class="error" role="alert"></p><div class="login-help">首次使用？在项目目录运行<br><code>python3 scripts/platform.py credentials</code><br>获取本机初始管理员账号。密码不会自动显示在页面上。</div>
   </div>
 </section>
 <div id="app" class="app hidden">
   <aside class="sidebar"><a class="brand" href="/platform.html"><span class="brand-icon">C°</span><span>ClimateLab<small>气象数据分析平台</small></span></a><p class="nav-label">研究空间</p><nav aria-label="主导航">
     <button data-page="datasets" class="nav-item active"><span>▦</span> 数据集工作台</button><button data-page="tasks" class="nav-item"><span>◷</span> 任务中心</button><button data-page="exports" class="nav-item"><span>⇩</span> 导出记录</button><button data-page="audit" class="nav-item"><span>≡</span> 操作记录</button><button data-page="users" id="users-nav" class="nav-item hidden"><span>♙</span> 账号管理</button>
-  </nav><div class="sidebar-foot"><span class="live-dot"></span> 单实例研究平台<br><small>真实样本 · 明确口径 · 可复现</small><a href="/index.html">旧版查询服务 ↗</a></div></aside>
+  </nav><div class="sidebar-foot"><span class="live-dot"></span> 单实例研究平台<br><small>真实样本 · 明确口径 · 可复现</small></div></aside>
   <div class="workspace"><header class="topbar"><div><span class="muted">工作空间</span><span class="crumb">/</span><strong id="breadcrumb">数据集工作台</strong></div><div class="account"><span id="account-name"></span><span id="account-role" class="role"></span><button id="logout" class="text-button">退出</button></div></header>
     <main><div id="notice" class="notice hidden" role="status"></div><section id="content"></section></main>
     <footer>ClimateLab · 个人复建与扩展项目 <span>固定指标口径 / 无全量 45 GB 扫描</span></footer>

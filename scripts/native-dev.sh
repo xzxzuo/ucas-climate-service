@@ -13,8 +13,6 @@ auth() {
   python3 scripts/local_auth.py
   while IFS='=' read -r key value; do
     case "$key" in
-      CLIMATE_READ_KEY) export CLIMATE_READ_KEY="${CLIMATE_READ_KEY:-$value}";;
-      CLIMATE_ADMIN_KEY) export CLIMATE_ADMIN_KEY="${CLIMATE_ADMIN_KEY:-$value}";;
       CLIMATE_PLATFORM_ADMIN_PASSWORD) export CLIMATE_PLATFORM_ADMIN_PASSWORD="${CLIMATE_PLATFORM_ADMIN_PASSWORD:-$value}";;
     esac
   done < "$runtime/auth.env"

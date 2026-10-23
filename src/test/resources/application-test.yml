@@ -6,10 +6,5 @@ app:
     worker-enabled: false
     admin-password: test-platform-admin-password-2026
     directory: target/platform-test-data
-  auth:
-    reader-key: test-reader-key-at-least-32-characters
-    admin-key: test-admin-key-at-least-32-characters
-  incremental:
-    enabled: false
   min-baseline-samples: 2
   cache-namespace: climate-rebuild-test

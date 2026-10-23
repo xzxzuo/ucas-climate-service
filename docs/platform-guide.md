@@ -13,7 +13,7 @@ python3 scripts/platform.py credentials
 
 浏览器访问 `http://127.0.0.1:8087/`。账号为 `admin`，密码来自私有 `.runtime/auth.env`。命令 `credentials` 会明确打印此密码供你自己复制，不要把终端输出放进截图、Git 或分享链接。
 
-`local_auth.py` 会保留已有两枚 API Key，另加一份随机平台管理员初始化密码。首次启动时将密码以 BCrypt（cost 12）保存到数据库；之后不自动重置账号。文件权限为 0600，并被 Git、Docker 构建忽略。
+`local_auth.py` 只生成随机平台管理员初始化密码；已有私有文件中的旧 API Key 不覆盖、也不再使用。首次启动时将密码以 BCrypt（cost 12）保存到数据库；之后不自动重置账号。文件权限为 0600，并被 Git、Docker 构建忽略。
 
 本机调试仍可使用 `bash scripts/native-dev.sh run`，脚本已经加载平台初始化密码。Docker 与原生开发的数据目录各自独立，请勿同时占用 8087/13306/16379，也不要让两份平台连接同一数据库。
 
@@ -35,11 +35,11 @@ Session 默认 30 分钟；重启应用后需要重新登录。数据和任务�
 
 ### 1. 先用只读样本认识业务
 
-登录后选择“真实气象样本 · 只读示例”。它是旧查询服务的一次性快照，包含 26,004 条观测、三个站点和 4,185 条逐日分析结果（原数据库有额外增量时可能不同）。
+登录后选择“真实气象样本 · 只读示例”。它是初始化种子表的一次性快照，包含约 26,004 条观测、三个站点和 4,185 条逐日分析结果，以实际页面为准。
 
 这个示例不是全球全量数据，也不保证中间年份连续。管理员和研究人员可点击“复制为我的数据集”；复制后的数据独立存储，可以编辑。示例本身不能上传、重算或修改共享权限。
 
-初始化快照只执行一次，原查询服务之后发生变化不会自动覆盖它。如果旧库为空，先按原 README 导入样本，再重启应用以创建示例。
+初始化快照只执行一次，种子表之后发生变化不会自动覆盖它。新环境启动时由 `bootstrap/Sample*` 导入已有 `data/sample.csv`，再创建只读示例；不再启动旧查询服务。
 
 ### 2. 创建自己的数据集
 
@@ -128,7 +128,7 @@ flowchart TD
 
 `/`（跳转 `/platform.html`）是唯一主工作台；气象站点、版本列表、五种分析查询和导出取数均经 Spring MVC / Service / MyBatis，未命中缓存才读取结果表。查询 Service 不再持有 JdbcTemplate，也不拼接 SQL。XML 通过 `<choose>` 选择固定查询、通过 `<if>` 处理地区筛选，所有请求值用 `#{...}` 绑定，强制带数据集与结果版本作用域。
 
-登录、共享、持久化任务以及批量导入/计算仍允许用参数化 JdbcTemplate；这不构成另一套气象查询链路，也不声称全平台都由本人在实习中开发。完整调用链和职责边界见 [统一架构](unified-architecture.md)。旧 `/api/**`、原表与旧增量目录仅保留兼容和公式核对，不接管当前平台查询；前端不需要 API Key，平台也不经 HTTP 转调旧 Controller。
+登录、共享、持久化任务以及批量导入/计算仍允许用参数化 JdbcTemplate；这不构成另一套气象查询链路，也不声称全平台都由本人在实习中开发。完整调用链和职责边界见 [统一架构](unified-architecture.md)。旧 `/api/**`、API Key、旧页面和旧增量代码已删除，种子初始化与已执行迁移保留；前端只使用平台账号。
 
 新增 Flyway V3 仅创建 `platform_*` 对象，没有改变旧表主键、旧视图、旧公式资源或 V1/V2 校验和。平台观测以 `(dataset_id,station_code,date)` 唯一；结果还增加 result_version；文件指纹以 `(dataset_id,sha256)` 唯一。
 
@@ -172,7 +172,7 @@ Java 根目录 `src/main/java/cn/zuoxu/climate/platform/`：
 
 ## 六、自动增量收件箱
 
-默认关闭。需要时在环境中设置 `CLIMATE_PLATFORM_INBOX_ENABLED=true` 后重建 app；与旧 `CLIMATE_INCREMENTAL_ENABLED` 是不同入口。
+默认关闭。需要时在环境中设置 `CLIMATE_PLATFORM_INBOX_ENABLED=true` 后重新创建 app；这是当前唯一增量入口。旧 `CLIMATE_INCREMENTAL_ENABLED` 配置和旧目录调度已移除。
 
 目录：`<CLIMATE_PLATFORM_DIRECTORY>/inbox/<数据集ID>/`。创建普通数据集时自动创建对应子目录。仅可信服务器操作人员可以写入这个目录，自动任务以数据集所有者身份提交，并额外记录 `AUTO_IMPORT_AS_OWNER`，不冒充用户在浏览器主动提交。
 
@@ -187,14 +187,14 @@ Docker 路径为 `/app/.runtime/platform/inbox/<id>/`，位于持久化命名卷
 ## 七、验证、日志与运行维护
 
 ```bash
-# 原有 + 新增测试，全部使用 _test 库
+# 当前平台与初始化测试，全部使用 _test 库
 CLIMATE_IT=true mvn -B -ntp test
 
 # 实际运行的完整平台业务，不使用模拟计算
 python3 scripts/platform.py verify
 
-# 原气象结果的独立 Decimal 核对
-python3 scripts/verify_live.py --report .runtime/platform-legacy-oracle.json
+# 对平台结果的独立 Decimal 核对（默认只读）
+python3 scripts/verify_live.py --report .runtime/platform-formula-oracle.json
 
 # 查看后台任务日志
 docker compose --env-file .runtime/auth.env logs -f app

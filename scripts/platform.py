@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from local_auth import load_keys
+from local_auth import load_credentials
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / '.runtime/platform-verification.json'
@@ -39,8 +39,10 @@ class Client:
         request = urllib.request.Request(self.base + '/platform/api' + path, data=data, method=method, headers=headers)
         try:
             with self.opener.open(request, timeout=30) as response:
+                self.last_headers = dict(response.headers)
                 code, raw = response.status, response.read()
         except urllib.error.HTTPError as error:
+            self.last_headers = dict(error.headers)
             code, raw = error.code, error.read()
         try:
             return code, json.loads(raw)
@@ -79,7 +81,7 @@ class Client:
 
 def admin_client(base):
     client = Client(base)
-    password = os.environ.get('CLIMATE_PLATFORM_ADMIN_PASSWORD') or load_keys().get('CLIMATE_PLATFORM_ADMIN_PASSWORD')
+    password = os.environ.get('CLIMATE_PLATFORM_ADMIN_PASSWORD') or load_credentials().get('CLIMATE_PLATFORM_ADMIN_PASSWORD')
     if not password:
         raise SystemExit('Run python3 scripts/local_auth.py and restart the app with the new configuration.')
     client.login('admin', password)
@@ -87,7 +89,7 @@ def admin_client(base):
 
 
 def credentials(_):
-    keys = load_keys()
+    keys = load_credentials()
     print('Local platform login (private; do not share screenshots):')
     print('username: admin')
     print('password:', keys.get('CLIMATE_PLATFORM_ADMIN_PASSWORD', '(run local_auth.py first)'))
@@ -105,6 +107,15 @@ def verify(args):
 
     anonymous = Client(args.base)
     check('anonymous platform API rejected', anonymous.request('/me')[0] == 401)
+    retired = []
+    for path in ('/api/meta', '/index.html'):
+        try:
+            with anonymous.opener.open(args.base + path, timeout=5) as response:
+                retired.append(response.status)
+        except urllib.error.HTTPError as error:
+            retired.append(error.code)
+            error.close()
+    check('retired API and page are absent', retired == [404, 404])
     admin = admin_client(args.base)
     check('real cookie login', admin.ok('/me')['role'] == 'ADMIN')
     check('CSRF protects mutations', admin.request('/datasets', 'POST', {'name': 'not-created'}, csrf=False)[0] == 403)

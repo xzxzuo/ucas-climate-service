@@ -1,6 +1,6 @@
 package cn.zuoxu.climate;
 
-import cn.zuoxu.climate.data.DatasetLoader;
+import cn.zuoxu.climate.bootstrap.SampleLoader;
 import cn.zuoxu.climate.data.PlatformQuery;
 import cn.zuoxu.climate.platform.*;
 import com.fasterxml.jackson.databind.*;
@@ -42,7 +42,7 @@ class PlatformIntegrationTest {
     @Autowired PlatformWorker worker;
     @Autowired PlatformProcessor processor;
     @Autowired PlatformInbox inbox;
-    @Autowired DatasetLoader loader;
+    @Autowired SampleLoader loader;
     @Autowired MapperTrace trace;
     final ObjectMapper json=new ObjectMapper();
     Client admin,alice,bob,viewer;
@@ -66,11 +66,11 @@ class PlatformIntegrationTest {
     String status(String id){return jdbc.queryForObject("SELECT status FROM platform_task WHERE id=?",String.class,id);}
     void run(){assertThat(worker.runOnce()).isTrue();}
 
-    @Test void cookieSessionCsrfAndLegacyCredentialsAreSeparated()throws Exception{
+    @Test void cookieSessionAndCsrfProtectThePlatform()throws Exception{
         Client anonymous=new Client();assertThat(anonymous.get("/me").statusCode()).isEqualTo(401);
         assertThat(alice.request("/datasets","POST","{}".getBytes(),"application/json",false).statusCode()).isEqualTo(403);
         assertThat(alice.get("/me").body()).contains("alice").doesNotContain("password","hash");
-        assertThat(alice.client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/meta")).GET().build(),HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(401);
+        assertThat(alice.client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/meta")).GET().build(),HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(404);
         assertThat(alice.post("/logout",null).statusCode()).isEqualTo(200);assertThat(alice.get("/me").statusCode()).isEqualTo(401);
     }
     @Test void datasetOwnershipSharingAndRevocationProtectEveryEntryPoint()throws Exception{
@@ -81,6 +81,14 @@ class PlatformIntegrationTest {
         alice.post("/datasets/"+id+"/members",Map.of("username","bob","permission","WRITE"));String job=task(bob.post("/datasets/"+id+"/analyze",null));
         alice.post("/datasets/"+id+"/members",Map.of("username","bob","permission","REMOVE"));assertThat(bob.get("/tasks/"+job).statusCode()).isEqualTo(404);
         run();assertThat(status(job)).isEqualTo("FAILED");assertThat(admin.get("/datasets/"+id).statusCode()).isEqualTo(200);
+    }
+    @Test void retiredApiRoutesAndPageAreAbsentEvenWithAnApiKey()throws Exception{
+        for(String path:List.of("/api/meta","/api/stations","/api/admin/incremental/status","/api/exports/thresholds.csv","/index.html")){
+            var request=HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+path)).header("X-API-Key","retired-not-a-credential").GET().build();
+            assertThat(HttpClient.newHttpClient().send(request,HttpResponse.BodyHandlers.ofString()).statusCode()).as(path).isEqualTo(404);
+        }
+        var request=HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/actuator/health")).GET().build();
+        assertThat(HttpClient.newHttpClient().send(request,HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(200);
     }
     @Test void sameStationDateAndSameFileAreIsolatedAcrossDatasets()throws Exception{
         long a=create(alice,"A"),b=create(alice,"B");String ia=upload(alice,a,fixture),ib=upload(alice,b,fixture);run();run();assertThat(status(ia)).isEqualTo("SUCCESS");assertThat(status(ib)).isEqualTo("SUCCESS");

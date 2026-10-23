@@ -1,6 +1,6 @@
 package cn.zuoxu.climate.platform;
 
-import cn.zuoxu.climate.incremental.FileSnapshot;
+import cn.zuoxu.climate.io.FileSnapshot;
 import org.slf4j.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;

@@ -1,6 +1,44 @@
 # 业务平台实际验证记录
 
-## 最新：2026-10-22 统一 Spring MVC / MyBatis 主链路
+## 最新：2026-10-23 清理退役业务代码
+
+本轮只保留 platform 主业务；具体删除、迁移与保留边界见 [code-cleanup.md](code-cleanup.md)。旧接口、API Key 和重复增量实现已删除，旧文档仅在 `docs/archive/` 作为历史背景。以下 2026-10-22/19 记录保留原样，不再表示旧 API 仍存在。
+
+### 1. 干净构建与自动测试
+
+```bash
+JAVA_HOME=/opt/homebrew/opt/openjdk@17 CLIMATE_IT=true mvn -B -ntp clean verify
+python3 scripts/test_sampler.py
+python3 scripts/test_local_auth.py
+```
+
+- 2026-10-23 14:08:56 +02:00，**37 个 Java 测试全部通过，0 failures/errors/skipped，BUILD SUCCESS**。日志 `.runtime/logs/business-cleanup-tests.log`。
+- 样本初始化公式断言仍保留：阈值、逐日指标、奇偶中位数、年度缺失值、幂等与事务回滚；旧 HTTP 用例改为平台查询/导出与退役入口 404 验证。
+- 新增平台真实定时器测试：没有直接调用 `scanOnce/runOnce`，仅投递 `.part` 并原子改名 `.csv`，由 Spring 收件箱 + Worker 自动入库 14 行，重复轮询不重导。确认删除旧 `@EnableScheduling` 配置没有让平台调度失效。
+- Python 抽样测试 4 项、凭据临时文件测试 3 项均 PASS。凭据测试不接触实际私有 `auth.env`，验证新文件只生成平台密码、旧内容保留、重复键拒绝、不轮换密码。
+- JaCoCo 行覆盖 507/558（90.86%），分支 303/483（62.73%）。源文件从 41 个 Java 文件收敛为 30 个；测试数量随已删除的旧业务范围收敛，不能与旧版数量直接比较功能多少。
+- `py_compile`、`bash -n`、`node --check` 与 `git diff --check` 均通过。仅设置管理员密码、使用空 env 文件的 Compose `config --quiet` 也通过，证明不再要求旧 API Key。
+
+### 2. Docker 与真实数据
+
+只重建 app，保留 MySQL/Redis 和平台文件卷。运行：
+
+```bash
+python3 scripts/platform.py verify
+python3 scripts/verify_live.py --export --report .runtime/cleanup-platform-oracle.json
+```
+
+- 2026-10-23T12:15:37Z，**37 项平台真实 HTTP 检查全部 PASS**，包括旧 `/api/meta` 与 `/index.html` 返回 404、Cookie/CSRF、权限撤销、真实导入/计算、五类查询、五类固定版本 CSV、失败回滚和人工重试。报告 `.runtime/platform-verification.json`，日志 `.runtime/logs/business-cleanup-live.log`。
+- 此次验证数据集为 9、10，三位验证账号都有明确标签；旧数据集没有删除。构建替换 app 后、覆盖旧报告前，已实际读取上一轮数据集 7、8 及五类私有 CSV，持久化检查 PASS。
+- 2026-10-23T12:15:14Z，迁移后的独立 Decimal oracle **11,894 项断言 PASS**，直接请求平台数据集 1 / 版本 1；核对 26,004 行样本、4,185 行逐日结果、各阶段公式、Redis HIT、参数绑定及一次真实异步 CSV。数量变化来自移除了已退役 API 的检查，不是仅对旧 API 报告改名。
+- 已确认打包产物不含旧 Controller/Mapper、安全链、增量包或 `index.html`。V1/V2/V3 和两份计算 SQL 没有修改，也未 DROP 旧表、清空 Redis 或触及原始 45 GB 文件。
+- 最后再次重启 app，等待健康检查成功后运行 `persistence-check`，实际读取本轮数据集 9/10、八个成功任务与五类 CSV 全部 PASS；日志 `.runtime/logs/cleanup-persistence.log`。本地 JAR 也已重新打包以包含清理后的页面资源。
+
+当前仍是单实例内部平台，不代表完成生产安全或容量验证。Session 不跨重启保留，升级后重新登录。
+
+---
+
+## 历史：2026-10-22 统一 Spring MVC / MyBatis 主链路
 
 对应架构见 [unified-architecture.md](unified-architecture.md)，可编辑图源见 [architecture.mmd](architecture.mmd)。本轮没有读取 45 GB 原文件，没有清空已有业务数据，也没有发布外部站点。
 

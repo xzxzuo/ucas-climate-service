@@ -1,6 +1,6 @@
 package cn.zuoxu.climate;
 
-import cn.zuoxu.climate.incremental.FileSnapshot;
+import cn.zuoxu.climate.io.FileSnapshot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;

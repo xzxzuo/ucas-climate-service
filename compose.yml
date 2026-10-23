@@ -34,14 +34,9 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-climate-local}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      CLIMATE_READ_KEY: ${CLIMATE_READ_KEY:?Set CLIMATE_READ_KEY; see scripts/local_auth.py}
-      CLIMATE_ADMIN_KEY: ${CLIMATE_ADMIN_KEY:?Set CLIMATE_ADMIN_KEY; see scripts/local_auth.py}
       CLIMATE_PLATFORM_ADMIN_PASSWORD: ${CLIMATE_PLATFORM_ADMIN_PASSWORD:?Run python3 scripts/local_auth.py}
       CLIMATE_PLATFORM_DIRECTORY: /app/.runtime/platform
       CLIMATE_PLATFORM_INBOX_ENABLED: ${CLIMATE_PLATFORM_INBOX_ENABLED:-false}
-      CLIMATE_INCREMENTAL_ENABLED: ${CLIMATE_INCREMENTAL_ENABLED:-false}
-      CLIMATE_INCREMENTAL_DIRECTORY: /app/data/incremental
-      CLIMATE_INCREMENTAL_DELAY_MS: ${CLIMATE_INCREMENTAL_DELAY_MS:-60000}
     command: ["--app.import-file=/app/data/sample.csv", "--app.import-if-empty"]
     volumes: ["./data:/app/data:ro", "platform-data:/app/.runtime/platform"]
     stop_grace_period: 40s

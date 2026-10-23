@@ -1,4 +1,6 @@
-package cn.zuoxu.climate.data;
+package cn.zuoxu.climate.bootstrap;
+
+import cn.zuoxu.climate.data.Observation;
 
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -12,12 +14,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.LinkedHashSet;
-import java.util.Set;
 
 @Service
-public class ImportService {
-    public record ImportResult(int rows, Set<String> stations) {}
+public class SampleImporter {
     private final JdbcTemplate jdbc;
     private final int maxRows;
     private static final String UPSERT="""
@@ -28,19 +27,13 @@ public class ImportService {
           weather_flags=VALUES(weather_flags),country=VALUES(country),province=VALUES(province),
           city=VALUES(city),district=VALUES(district)
         """;
-    public ImportService(JdbcTemplate jdbc,@Value("${app.max-import-rows}") int maxRows) { this.jdbc=jdbc;this.maxRows=maxRows; }
+    public SampleImporter(JdbcTemplate jdbc,@Value("${app.max-import-rows}") int maxRows) { this.jdbc=jdbc;this.maxRows=maxRows; }
 
     @Transactional(rollbackFor=Exception.class)
     public int importFile(Path path) throws IOException {
-        return importDetailed(path).rows();
-    }
-
-    @Transactional(rollbackFor=Exception.class)
-    public ImportResult importDetailed(Path path) throws IOException {
         if (Files.size(path)>64L*1024*1024) throw new IllegalArgumentException("Import accepts normalized samples <=64 MiB; run sample_source.py first");
         jdbc.queryForObject("SELECT id FROM analysis_state WHERE id=1 FOR UPDATE",Integer.class);
         int count=0;
-        Set<String> stations=new LinkedHashSet<>();
         try (var reader=Files.newBufferedReader(path,StandardCharsets.UTF_8);
              CSVParser parser=CSVFormat.DEFAULT.builder().setHeader().setSkipHeaderRecord(true).get().parse(reader)) {
             if (!parser.getHeaderNames().equals(List.of("STATION","DATE","NAME","TEMP","PRCP","HUMIDITY","MAX","MIN","FRSHTT","country","province","city","district")))
@@ -51,7 +44,6 @@ public class ImportService {
                 if (!row.isConsistent()) throw new IllegalArgumentException("CSV record "+row.getRecordNumber()+" has unexpected column count");
                 try {
                     Observation observation=Observation.from(row.toMap());
-                    stations.add(observation.station());
                     batch.add(observation.parameters());
                 }
                 catch (RuntimeException e) { throw new IllegalArgumentException("CSV record "+row.getRecordNumber()+": "+e.getMessage(),e); }
@@ -60,6 +52,6 @@ public class ImportService {
             if (!batch.isEmpty()) jdbc.batchUpdate(UPSERT,batch);
         }
         if (count==0) throw new IllegalArgumentException("CSV must contain at least one observation");
-        return new ImportResult(count,Set.copyOf(stations));
+        return count;
     }
 }

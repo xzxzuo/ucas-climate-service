@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Decimal oracle: verify live Java/MySQL results against sampled raw observations."""
+"""Independent Decimal oracle for the platform. Read-only unless --export is requested."""
 import argparse
 import collections
 import csv
@@ -8,10 +8,8 @@ import io
 import json
 from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from pathlib import Path
-from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-from local_auth import reader_key, admin_key
+from platform import admin_client, Client
 
 MAGNITUDES=['ltd','htd','hr','ehr','lh','htd1','ctd1']
 WEATHER=['fog','rain','snow','hail','thunder','tornado']
@@ -42,17 +40,22 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--base',default='http://127.0.0.1:8087')
     p.add_argument('--sample',type=Path,default=Path('data/sample.csv'))
-    p.add_argument('--report',type=Path,default=Path('docs/live-verification.json'))
+    p.add_argument('--dataset',type=int,help='Dataset matching the sample; default is the read-only example.')
+    p.add_argument('--export',action='store_true',help='Also create and download one labeled verification export task.')
+    p.add_argument('--report',type=Path,default=Path('.runtime/formula-verification.json'))
     args=p.parse_args()
-    read_key=reader_key()
-    def get(path,parameters=None,status=200,key=read_key):
-        target=args.base+path+('?' + urlencode(parameters) if parameters else '')
-        try:
-            request=Request(target,headers={'X-API-Key':key} if key else {})
-            with urlopen(request,timeout=20) as r: code=r.status;headers=dict(r.headers);body=r.read()
-        except HTTPError as r:code=r.code;headers=dict(r.headers);body=r.read()
-        check(code,status,path+' status')
-        return json.loads(body,parse_float=Decimal),headers
+    client=admin_client(args.base)
+    if args.dataset is None:
+        examples=[d for d in client.ok('/datasets') if d['is_example']]
+        if len(examples)!=1:raise RuntimeError('Expected one read-only example; specify --dataset explicitly.')
+        args.dataset=examples[0]['id']
+    prefix=f'/datasets/{args.dataset}'
+    info=client.ok(prefix);dataset=info['dataset'];version=dataset['active_result_version']
+    if version is None:raise RuntimeError('Analyze this dataset before verifying its formulas.')
+    def get(parameters,status=200):
+        code,body=client.request(prefix+'/analysis?'+urlencode({'version':version,**parameters}))
+        check(code,status,str(parameters)+' status')
+        return body,client.last_headers
     rows=[]
     with args.sample.open(encoding='utf-8',newline='') as f:
         for row in csv.DictReader(f):
@@ -68,7 +71,8 @@ def main():
            'prcp95':q([r['PRCP'] for r in base],'.95'),'prcp99':q([r['PRCP'] for r in base],'.99'),
            'humidity5':q([r['HUMIDITY'] for r in base],'.05')}
         thresholds[station]=t
-        actual,_=get('/api/stations/'+station+'/thresholds')
+        response,_=get({'kind':'THRESHOLDS','limit':500})
+        actual=next(t for t in response['items'] if t['stationCode']==station)
         for key,value in t.items():check(actual[key],value,station+' '+key)
     daily={};annual=collections.defaultdict(list);geos={}
     for r in rows:
@@ -84,11 +88,12 @@ def main():
     for station in sorted(thresholds):
         dates=sorted(d for s,d in daily if s==station)
         # Verify first 200 daily observations of every station, including missing values.
-        response,_=get('/api/stations/'+station+'/indicators',{'from':dates[0],'to':'2024-01-01','limit':200})
+        response,_=get({'kind':'DAILY','station':station,'from':dates[0],'to':'2024-01-01','limit':200})
         for r in response['items']:
             for key,value in daily[(station,r['date'])].items():check(r[key],value,station+' '+r['date']+' '+key)
         for year in sorted({int(d[:4]) for d in dates}):
-            actual,_=get('/api/stations/'+station+'/annual',{'year':year})
+            response,_=get({'kind':'STATION_ANNUAL','station':station,'year':year})
+            actual=response['items']
             check(len(actual),13,station+' annual metric count')
             for r in actual:
                 values=annual[(station,year,r['metric'].lower())]
@@ -105,7 +110,7 @@ def main():
     for (year,level,geo,metric),values in groups.items():
         params=dict(year=year,level=level,metric=metric.upper())
         params.update(zip(('country','province','city','district'),geo))
-        response,_=get('/api/aggregates/annual',params)
+        body,_=get({'kind':'REGION_ANNUAL',**params});response=body['items']
         check(len(response),1,'regional annual row count');a=response[0];values=sorted(values);n=len(values)
         expected_median=Decimal(values[(n-1)//2]+values[n//2])/2
         check(a['minDays'],min(values),'region min');check(a['maxDays'],max(values),'region max')
@@ -118,29 +123,34 @@ def main():
         for metric in MAGNITUDES:
             values=sorted(v[metric] for (s,d),v in daily.items() if d==date and v[metric] is not None and geos[(s,int(d[:4]))][0]==raw['country'])
             if not values:continue
-            actual,_=get('/api/aggregates/daily',dict(date=date,level='COUNTRY',metric=metric.upper(),country=raw['country']))
+            body,_=get(dict(kind='REGION_DAILY',date=date,level='COUNTRY',metric=metric.upper(),country=raw['country']));actual=body['items']
             check(len(actual),1,'daily region count');n=len(values)
             check(actual[0]['medianValue'],(values[(n-1)//2]+values[n//2])/2,'daily median')
             check(actual[0]['avgValue'],sum(values)/n,'daily mean')
     station=sorted(thresholds)[0]
-    _,h1=get('/api/stations/'+station+'/thresholds');_,h2=get('/api/stations/'+station+'/thresholds')
+    _,h1=get({'kind':'THRESHOLDS'});_,h2=get({'kind':'THRESHOLDS'})
     check(h2.get('X-Cache'),'HIT','real Redis hit')
-    get('/api/stations/'+station+'/indicators',{'from':'1993-02-01','to':'1993-01-01'},400)
-    get('/api/aggregates/annual',{'year':1993,'level':'COUNTRY','metric':'BAD'},400)
-    injection,_=get('/api/aggregates/annual',{'year':1993,'level':'COUNTRY','metric':'HTD','country':"中国' OR 1=1 --"})
-    check(injection,[],'country is a bound value, not SQL')
-    get('/api/meta',status=401,key=None)
-    get('/api/admin/cache',status=403)
-    get('/api/admin/cache',key=admin_key())
-    target=args.base+'/api/exports/daily.csv?'+urlencode({'station':station,'from':'1993-01-01','to':'1994-01-01'})
-    with urlopen(Request(target,headers={'X-API-Key':read_key})) as r:exported=list(csv.DictReader(io.StringIO(r.read().decode('utf-8-sig'))))
-    check(len(exported),sum(s==station and d.startswith('1993') for s,d in daily),'export row count')
-    meta,_=get('/api/meta');check(meta['analysis']['rawRows'],len(rows),'import count');check(meta['analysis']['analysisRows'],len(daily),'daily count')
+    get({'kind':'DAILY','station':station,'from':'1993-02-01','to':'1993-01-01'},400)
+    get({'kind':'REGION_ANNUAL','year':1993,'level':'COUNTRY','metric':'BAD'},400)
+    injection,_=get({'kind':'REGION_ANNUAL','year':1993,'level':'COUNTRY','metric':'HTD','country':"中国' OR 1=1 --"})
+    check(injection['items'],[],'country is a bound value, not SQL')
+    check(Client(args.base).request('/me')[0],401,'anonymous access rejected')
+    extra_checks=[]
+    if args.export:
+        task=client.ok(prefix+'/exports','POST',{'kind':'DAILY','station':station,'from':'1993-01-01','to':'1994-01-01','version':str(version)})
+        job=client.wait(task['id']);check(job['status'],'SUCCESS','verification export completed')
+        code,text=client.request('/exports/'+job['export']['id']+'/download');check(code,200,'export download')
+        exported=list(csv.DictReader(io.StringIO(text)))
+        check(len(exported),sum(s==station and d.startswith('1993') for s,d in daily),'export row count')
+        extra_checks=['CSV row count']
+    check(dataset['raw_rows'],len(rows),'import count')
+    run=next(r for r in info['versions'] if r['result_version']==version)
+    check(run['analysis_rows'],len(daily),'daily count')
     report=dict(verified_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),status='PASS',assertions=checks,
-                source_rows=len(rows),daily_rows=len(daily),stations=sorted(thresholds),
+                dataset_id=args.dataset,result_version=version,source_rows=len(rows),daily_rows=len(daily),stations=sorted(thresholds),
                 checks=['all station thresholds','up to 200 daily records per station, 13 metrics',
                         'all station-year counts','all sampled region levels yearly mean/min/max/median',
-                        'daily region statistics','real Redis HIT','validation and admin protection','bound SQL values','CSV row count'],
+                        'daily region statistics','real Redis HIT','validation and session protection','bound SQL values']+extra_checks,
                 warning='sample verification does not establish correctness or performance on the full 45 GB dataset')
     args.report.parent.mkdir(parents=True,exist_ok=True)
     args.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')

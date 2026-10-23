@@ -1,4 +1,4 @@
-package cn.zuoxu.climate.data;
+package cn.zuoxu.climate.bootstrap;
 
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -9,11 +9,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.nio.file.Path;
 
 @Component
-public class LoadRunner implements ApplicationRunner {
-    private final DatasetLoader loader;
+public class SampleLoadRunner implements ApplicationRunner {
+    private final SampleLoader loader;
     private final ConfigurableApplicationContext context;
     private final JdbcTemplate jdbc;
-    public LoadRunner(DatasetLoader loader,ConfigurableApplicationContext context,JdbcTemplate jdbc) { this.loader=loader;this.context=context;this.jdbc=jdbc; }
+    public SampleLoadRunner(SampleLoader loader,ConfigurableApplicationContext context,JdbcTemplate jdbc) { this.loader=loader;this.context=context;this.jdbc=jdbc; }
     @Override public void run(ApplicationArguments args) throws Exception {
         if (!args.containsOption("app.import-file")) return;
         if (args.containsOption("app.import-if-empty") && jdbc.queryForObject("SELECT COUNT(*) FROM raw_observation",Long.class)>0) {
