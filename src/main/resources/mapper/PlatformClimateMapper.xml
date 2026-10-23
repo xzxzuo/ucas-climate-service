@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.zuoxu.climate.data.PlatformClimateMapper">
+  <select id="stations" resultType="java.util.LinkedHashMap">
+    SELECT station_code stationCode,MAX(station_name) name,MAX(country) country,MAX(province) province,MAX(city) city,
+      MIN(observation_date) firstDate,MAX(observation_date) lastDate,COUNT(*) observations
+    FROM platform_raw_observation WHERE dataset_id=#{datasetId}
+    GROUP BY station_code ORDER BY station_code LIMIT 200
+  </select>
+  <select id="versions" resultType="java.util.LinkedHashMap">
+    SELECT * FROM platform_analysis_run WHERE dataset_id=#{datasetId} ORDER BY result_version DESC LIMIT 100
+  </select>
+  <select id="hasVersion" resultType="boolean">
+    SELECT EXISTS(SELECT 1 FROM platform_analysis_run WHERE dataset_id=#{datasetId} AND result_version=#{version})
+  </select>
+
+  <!-- Only enum-selected, fixed tables/columns; every request value uses parameter binding. -->
+  <sql id="columns">
+    <choose>
+      <when test="q.kind.name() == 'THRESHOLDS'">
+        station_code stationCode,temp10,temp90,prcp95,prcp99,humidity5,
+        temp_samples tempSamples,prcp_samples prcpSamples,humidity_samples humiditySamples
+      </when>
+      <when test="q.kind.name() == 'DAILY'">
+        station_code stationCode,observation_date `date`,ltd,htd,hr,ehr,lh,htd1,ctd1,
+        fog,rain,snow,hail,thunder,tornado,country,province,city,district
+      </when>
+      <when test="q.kind.name() == 'STATION_ANNUAL'">
+        station_code stationCode,observation_year `year`,metric,nonzero_days nonzeroDays,valid_days validDays,
+        country,province,city,district
+      </when>
+      <when test="q.kind.name() == 'REGION_DAILY'">
+        observation_date `date`,region_level level,country,province,city,district,metric,
+        avg_value `avgValue`,min_value `minValue`,max_value `maxValue`,median_value `medianValue`,valid_station_count validStationCount
+      </when>
+      <otherwise>
+        observation_year `year`,region_level level,country,province,city,district,metric,
+        avg_days avgDays,min_days minDays,max_days maxDays,median_days medianDays,station_count stationCount
+      </otherwise>
+    </choose>
+  </sql>
+  <sql id="source">
+    <choose>
+      <when test="q.kind.name() == 'THRESHOLDS'">platform_station_threshold</when>
+      <when test="q.kind.name() == 'DAILY'">platform_daily_indicator</when>
+      <when test="q.kind.name() == 'STATION_ANNUAL'">platform_station_year_stat</when>
+      <when test="q.kind.name() == 'REGION_DAILY'">platform_region_daily_stat</when>
+      <otherwise>platform_region_year_stat</otherwise>
+    </choose>
+  </sql>
+  <sql id="filters">
+    WHERE dataset_id=#{q.datasetId} AND result_version=#{q.resultVersion}
+    <choose>
+      <when test="q.kind.name() == 'DAILY'">
+        AND station_code=#{q.filters.station} AND observation_date &gt;= #{q.filters.from} AND observation_date &lt; #{q.filters.to}
+      </when>
+      <when test="q.kind.name() == 'STATION_ANNUAL'">
+        AND station_code=#{q.filters.station} AND observation_year=#{q.filters.year}
+      </when>
+      <when test="q.kind.name() == 'REGION_DAILY' or q.kind.name() == 'REGION_ANNUAL'">
+        <choose>
+          <when test="q.kind.name() == 'REGION_DAILY'">AND observation_date=#{q.filters.date}</when>
+          <otherwise>AND observation_year=#{q.filters.year}</otherwise>
+        </choose>
+        AND region_level=#{q.filters.level} AND metric=#{q.filters.metric}
+        <if test="q.filters.country != null">AND country=#{q.filters.country}</if>
+        <if test="q.filters.province != null">AND province=#{q.filters.province}</if>
+        <if test="q.filters.city != null">AND city=#{q.filters.city}</if>
+        <if test="q.filters.district != null">AND district=#{q.filters.district}</if>
+      </when>
+    </choose>
+  </sql>
+  <select id="selectPage" resultType="java.util.LinkedHashMap">
+    SELECT <include refid="columns"/> FROM <include refid="source"/> <include refid="filters"/>
+    ORDER BY
+    <choose>
+      <when test="q.kind.name() == 'THRESHOLDS'">station_code</when>
+      <when test="q.kind.name() == 'DAILY'">observation_date</when>
+      <when test="q.kind.name() == 'STATION_ANNUAL'">metric</when>
+      <otherwise>country,province,city,district</otherwise>
+    </choose>
+    LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="count" resultType="long">
+    SELECT COUNT(*) FROM <include refid="source"/> <include refid="filters"/>
+  </select>
+</mapper>

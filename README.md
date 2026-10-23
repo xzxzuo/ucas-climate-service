@@ -4,6 +4,8 @@
 
 本次业务化扩展仍然是 2026 年个人复建，不代表当年的实习已经完成这些功能。原计算公式、旧表和 API Key 接口保留，新平台使用独立的 `platform_*` 表与 Session 登录，不混用两种身份。
 
+平台是现在的主入口，气象查询不再绕过 MyBatis：**工作台 → Spring MVC（PlatformClimateController）→ PlatformQueries Service → QueryCache / MyBatis Mapper XML → MySQL**。缓存命中直接返回；未命中才由 Mapper 查库，逐日明细和导出直接走 Mapper。登录、账号、共享与任务管理是配套模块，不等于你在实习中全部负责。见 [统一架构与职责边界](docs/unified-architecture.md)。
+
 ## 先使用业务平台
 
 ```bash
@@ -20,6 +22,25 @@ python3 scripts/platform.py credentials
 建议第一次这样体验：进入“真实气象样本 · 只读示例” → 点击“复制为我的数据集” → “结果分析”切换阈值/逐日/年度/地区统计 → 点击“导出” → 在“导出记录”下载 CSV。随后在“账号管理”创建研究人员账号，体验私人数据集与共享授权。
 
 完整说明见 [业务平台使用与架构](docs/platform-guide.md)、[平台 API](docs/platform-api.md)、[本次验证记录](docs/platform-verification.md)。
+
+### 统一的平台查询架构
+
+```mermaid
+flowchart LR
+  UI[ClimateLab 工作台] --> AUTH[配套：Session / CSRF]
+  AUTH --> MVC["Spring MVC<br/>PlatformClimateController"]
+  MVC --> SERVICE["PlatformQueries<br/>权限 / 参数 / 固定版本"]
+  SERVICE --> CACHE{"QueryCache<br/>Redis"}
+  CACHE -->|命中| JSON[JSON / 图表]
+  CACHE -->|未命中或故障| MAPPER["PlatformClimateMapper<br/>XML 动态 SQL"]
+  SERVICE -->|逐日明细 / 导出取数| MAPPER
+  MAPPER --> MYSQL[("MySQL platform_*<br/>dataset_id + result_version")]
+  MYSQL --> MAPPER
+  MAPPER -->|查询结果 / 回填缓存| SERVICE
+  SERVICE --> JSON
+```
+
+这里的 Service 包含五类气象检索，地区统计读取已计算的聚合结果；不是每次 HTTP 请求重新扫描原始数据计算中位数。异步导出由 Worker 调用同一个 Service/Mapper 取数。完整导入、计算、调度路径及简历讲解见 [架构详解](docs/unified-architecture.md)。下文原服务说明仅作为历史兼容接口与公式验证说明，不是平台查询的另一条主路径。
 
 ```bash
 # 完整真实 HTTP 验证：会创建明确标注的验证账号/数据集，保留已有数据

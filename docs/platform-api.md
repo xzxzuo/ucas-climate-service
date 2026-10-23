@@ -2,6 +2,8 @@
 
 Base：`http://127.0.0.1:8087/platform/api`。与旧 `/api/**` 不同，这里使用 Session Cookie 和 CSRF，不接受 X-API-Key 作为个人账号。
 
+当前工作台的站点、分析、导出请求由 `PlatformClimateController`（Spring MVC）接收，调用 `PlatformQueries`（Service），经统一 `QueryCache` 与 `PlatformClimateMapper.xml` 取数。接口路径、登录方式和 JSON 契约不变；不再使用 JdbcTemplate 作为气象查询数据访问层。详见 [统一架构](unified-architecture.md)。
+
 ## 认证流程
 
 1. `GET /csrf`，获得 `{headerName,token}` 并保留服务端设置的 Cookie。

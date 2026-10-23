@@ -96,7 +96,8 @@ STATION,DATE,NAME,TEMP,PRCP,HUMIDITY,MAX,MIN,FRSHTT,country,province,city,distri
 ```mermaid
 flowchart TD
   UI[浏览器工作台] --> AUTH[Spring Security Session + CSRF]
-  AUTH --> ACL[账号状态 / 角色 / 数据集权限]
+  AUTH --> MVC[Spring MVC: PlatformClimateController]
+  MVC --> ACL[账号状态 / 角色 / 数据集权限]
   ACL --> DATA[数据集与共享]
   ACL --> UPLOAD[上传与 SHA-256 去重]
   INBOX[可选的可信增量收件箱] --> UPLOAD
@@ -112,15 +113,22 @@ flowchart TD
   RAW --> COMPUTE
   COMPUTE --> PUBLISH[事务提交：结果 + 版本指针 + 成功状态]
   PUBLISH --> RESULTS[(历史结果版本)]
-  ACL --> QUERY[查询]
-  QUERY --> REDIS[按数据集与版本隔离的 Redis 缓存]
-  QUERY --> RESULTS
+  ACL --> QUERY[PlatformQueries Service]
+  QUERY --> REDIS{QueryCache / Redis}
+  REDIS -->|命中| RESPONSE[JSON / 图表]
+  REDIS -->|未命中或故障| MAPPER[MyBatis: PlatformClimateMapper XML]
+  QUERY -->|逐日明细| MAPPER
+  MAPPER --> RESULTS
+  EXPORT -->|复用查询 Service 取数| MAPPER
+  QUERY --> RESPONSE
   EXPORT --> FILES[私有导出文件]
   ACL --> DOWNLOAD[鉴权下载 / 期限 / 审计]
   DOWNLOAD --> FILES
 ```
 
-旧 `/api/**` 仍走 API Key + 原 MyBatis Mapper，旧增量目录仍操作旧表。新 `/platform/api/**` 走 Session + 新平台服务；为了清晰表达作用域和事务，新平台使用 JdbcTemplate 参数化 SQL，原 MyBatis 没有删除。两套身份和表互不冒充或互相回退。
+`/`（跳转 `/platform.html`）是唯一主工作台；气象站点、版本列表、五种分析查询和导出取数均经 Spring MVC / Service / MyBatis，未命中缓存才读取结果表。查询 Service 不再持有 JdbcTemplate，也不拼接 SQL。XML 通过 `<choose>` 选择固定查询、通过 `<if>` 处理地区筛选，所有请求值用 `#{...}` 绑定，强制带数据集与结果版本作用域。
+
+登录、共享、持久化任务以及批量导入/计算仍允许用参数化 JdbcTemplate；这不构成另一套气象查询链路，也不声称全平台都由本人在实习中开发。完整调用链和职责边界见 [统一架构](unified-architecture.md)。旧 `/api/**`、原表与旧增量目录仅保留兼容和公式核对，不接管当前平台查询；前端不需要 API Key，平台也不经 HTTP 转调旧 Controller。
 
 新增 Flyway V3 仅创建 `platform_*` 对象，没有改变旧表主键、旧视图、旧公式资源或 V1/V2 校验和。平台观测以 `(dataset_id,station_code,date)` 唯一；结果还增加 result_version；文件指纹以 `(dataset_id,sha256)` 唯一。
 
@@ -136,10 +144,13 @@ Java 根目录 `src/main/java/cn/zuoxu/climate/platform/`：
 | PlatformTasks | 接收配额、任务创建、查询、重试、阶段更新 |
 | PlatformWorker | 独立单线程调度、CAS 认领、失败/重启恢复 |
 | PlatformProcessor | 导入事务、计算事务、固定版本导出 |
-| PlatformQueries | 五种参数化查询、作用域校验、BigDecimal 缓存读取 |
+| PlatformClimateController | 本人重点复盘的 Spring MVC 站点/分析/导出接口；认证由配套模块提供 |
+| PlatformQueries | 查询 Service：权限先于缓存、参数规范化、固定版本、调用 Mapper |
+| data/PlatformQuery、data/PlatformClimateMapper、mapper/PlatformClimateMapper.xml | 类型化作用域、动态过滤、分页/计数及导出共用 SQL |
+| service/QueryCache | 统一 Redis cache-aside、版本/数据集隔离、BigDecimal、故障回源 |
 | PlatformInbox | 可选自动目录投递，复用上传与任务路径 |
 | PlatformBootstrap | 仅首次创建管理员和只读原数据快照 |
-| PlatformController / PlatformPage | REST API、私有文件下载、页面入口 |
+| PlatformController / PlatformPage | 配套管理 REST API、私有文件下载、页面入口 |
 
 从零复现的顺序：先定义数据集和权限 → 建平台表和迁移 → 复用 Observation 校验并实现事务导入 → 把原公式改为 dataset/version 作用域 SQL → 做结果指针发布 → 持久化任务和单 Worker → 查询缓存和私有导出 → 登录与前端联调 → 故障/隔离验证。不是对当年实习开发顺序的虚构。
 

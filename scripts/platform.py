@@ -146,6 +146,32 @@ def verify(args):
     first = alice.ok(f'/datasets/{a}/analysis?kind=THRESHOLDS')
     second = alice.ok(f'/datasets/{a}/analysis?kind=THRESHOLDS')
     check('cached results retain numerical values', first == second and len(first['items']) > 0)
+    stations = alice.ok(f'/datasets/{a}/stations')
+    check('platform station list is scoped and usable', len(stations) > 0 and sum(s['observations'] for s in stations) == da['raw_rows'])
+    station = first['items'][0]['stationCode']
+    daily_parameters = {'kind': 'DAILY', 'station': station, 'from': '1993-01-01', 'to': '2101-01-01'}
+    daily = alice.ok(f'/datasets/{a}/analysis?' + urllib.parse.urlencode({**daily_parameters, 'limit': 1}))
+    check('DAILY query returns a real paginated result', len(daily['items']) == 1 and daily['total'] >= 1)
+    date = daily['items'][0]['date']
+    kinds = [daily_parameters,
+             {'kind': 'STATION_ANNUAL', 'station': station, 'year': date[:4]},
+             {'kind': 'REGION_DAILY', 'date': date, 'level': 'COUNTRY', 'metric': 'HTD'},
+             {'kind': 'REGION_ANNUAL', 'year': date[:4], 'level': 'COUNTRY', 'metric': 'HTD'}]
+    extra_tasks, extra_artifacts = [], []
+    for parameters in kinds:
+        result = daily if parameters['kind'] == 'DAILY' else alice.ok(f'/datasets/{a}/analysis?' + urllib.parse.urlencode({**parameters, 'limit': 1}))
+        if parameters['kind'] != 'DAILY':
+            check(parameters['kind'] + ' query returns a real paginated result', len(result['items']) == 1 and result['total'] >= 1)
+        export = alice.ok(f'/datasets/{a}/exports', 'POST', {**parameters, 'version': '1'})
+        finished = alice.wait(export['id'])
+        if finished['status'] != 'SUCCESS':
+            raise RuntimeError(f"{parameters['kind']} export failed: {finished.get('error_message')}")
+        artifact = finished['export']['id']
+        code, text = alice.request(f'/exports/{artifact}/download')
+        rows = list(csv.DictReader(io.StringIO(text)))
+        check(parameters['kind'] + ' CSV uses the same filtered result', code == 200 and len(rows) == result['total'] and all(r['datasetId'] == str(a) and r['resultVersion'] == '1' for r in rows))
+        extra_tasks.append(export['id'])
+        extra_artifacts.append(artifact)
     alice.ok(f'/datasets/{a}/members', 'POST', {'username': names[1], 'permission': 'READ'})
     check('explicit read grant works', bob.request(f'/datasets/{a}/analysis?kind=THRESHOLDS')[0] == 200)
     check('read grant does not permit analysis', bob.request(f'/datasets/{a}/analyze', 'POST')[0] == 403)
@@ -172,7 +198,7 @@ def verify(args):
     check('manual retry uses a new task', retried['id'] != failed['id'] and alice.wait(retried['id'])['status'] == 'FAILED')
     check('audit trail exists', any(r['action'] == 'DOWNLOAD_EXPORT' for r in alice.ok('/audit')))
     report = {'time': datetime.utcnow().isoformat() + 'Z', 'base': args.base, 'passed': len(checks), 'checks': checks,
-              'datasets': [a, b], 'users': names, 'resultVersion': 2, 'exportId': export_id, 'tasks': [ca, cb, export_task, newer]}
+              'datasets': [a, b], 'users': names, 'resultVersion': 2, 'exportId': export_id, 'additionalExports': extra_artifacts, 'tasks': [ca, cb, export_task, newer] + extra_tasks}
     REPORT.parent.mkdir(exist_ok=True, parents=True)
     REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(f'All {len(checks)} checks passed; report: {REPORT}')
@@ -190,9 +216,10 @@ def persistence(args):
     for task in report['tasks']:
         if client.ok('/tasks/' + task)['status'] != 'SUCCESS':
             raise RuntimeError('Missing successful task history')
-    code, body = client.request('/exports/' + report['exportId'] + '/download')
-    if code != 200 or 'datasetId,resultVersion' not in body:
-        raise RuntimeError('Export artifact missing after restart')
+    for artifact in [report['exportId']] + report.get('additionalExports', []):
+        code, body = client.request('/exports/' + artifact + '/download')
+        if code != 200 or 'datasetId,resultVersion' not in body:
+            raise RuntimeError('Export artifact missing after restart')
     print('PASS: datasets, versions, task history, and private export file survive restart.')
 
 

@@ -1,0 +1,36 @@
+flowchart TB
+  USER[科研人员] --> UI[ClimateLab 工作台 /platform.html]
+  subgraph SUPPORT[配套模块：不默认归为个人实习职责]
+    SECURITY[Spring Security / Session / CSRF]
+    ACCESS[PlatformAccess 数据集权限]
+    TASK[PlatformTasks 持久化任务]
+    WORKER[Spring Scheduling 单 Worker]
+  end
+  subgraph CORE[重点复盘：气象查询与导出模块]
+    MVC[Spring MVC: PlatformClimateController]
+    SERVICE[PlatformQueries Service：校验 / 版本 / 查询编排]
+    CACHE{QueryCache / Redis}
+    MAPPER[MyBatis: PlatformClimateMapper + XML]
+    JSON[JSON 返回 / 工作台图表]
+    CSV[PlatformProcessor 生成固定版本 CSV]
+  end
+  UI --> SECURITY --> MVC
+  MVC --> SERVICE
+  SERVICE -->|每次请求先校验| ACCESS
+  SERVICE --> CACHE
+  CACHE -->|命中| JSON
+  CACHE -->|未命中或不可用| MAPPER
+  SERVICE -->|逐日明细 / 导出取数| MAPPER
+  MAPPER --> DB[(MySQL platform_* 观测与结果表)]
+  MAPPER -->|查询结果 / 回填缓存| SERVICE
+  SERVICE --> JSON
+  MVC -->|提交导出：固定参数和版本| TASK
+  TASK --> WORKER
+  WORKER -->|PlatformProcessor.export| SERVICE
+  SERVICE -->|返回导出数据行| CSV
+  SOURCE[既有气象数据 / 标准化 CSV] --> IMPORT[上传或可选增量收件箱]
+  IMPORT --> TASK
+  WORKER --> COMPUTE[批量导入 / 指标 SQL / 事务发布新版本]
+  COMPUTE --> DB
+  classDef focus fill:#e1f1ff,stroke:#1673b8,color:#102b40
+  class MVC,SERVICE,MAPPER,CACHE,JSON,CSV focus

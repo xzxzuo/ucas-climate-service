@@ -40,12 +40,8 @@ public class PlatformController {
     @GetMapping("/datasets/{id}/files") public Object files(@PathVariable long id){return datasets.files(users.current(),id);}
     @PostMapping(value="/datasets/{id}/files",consumes=MediaType.MULTIPART_FORM_DATA_VALUE) @ResponseStatus(HttpStatus.ACCEPTED)
     public Object upload(@PathVariable long id,@RequestParam("file")MultipartFile file)throws Exception{return datasets.upload(users.current(),id,file);}
-    @GetMapping("/datasets/{id}/stations") public Object stations(@PathVariable long id){return queries.stations(users.current(),id);}
-    @GetMapping("/datasets/{id}/analysis") public ResponseEntity<?> analysis(@PathVariable long id,@RequestParam Map<String,String> parameters){var result=queries.query(users.current(),id,parameters);return ResponseEntity.ok().header("X-Cache",result.cache()).body(result.body());}
     @PostMapping("/datasets/{id}/analyze") @ResponseStatus(HttpStatus.ACCEPTED)
     public Object analyze(@PathVariable long id){return tasks.enqueue(users.current(),id,"ANALYZE",null,Map.of(),null,null);}
-    @PostMapping("/datasets/{id}/exports") @ResponseStatus(HttpStatus.ACCEPTED)
-    public Object export(@PathVariable long id,@RequestBody Map<String,String> parameters){var actor=users.current();var selection=queries.prepare(actor,id,parameters,null);return tasks.enqueue(actor,id,"EXPORT",null,selection.parameters(),selection.version(),null);}
     @GetMapping("/tasks") public Object tasks(@RequestParam(required=false)Long datasetId,@RequestParam(defaultValue="50")int limit,@RequestParam(defaultValue="0")int offset){return tasks.list(users.current(),datasetId,limit,offset);}
     @GetMapping("/tasks/{id}") public Object task(@PathVariable String id){var task=tasks.find(users.current(),id);var export=store.one("SELECT * FROM platform_export WHERE task_id=?",id);if(export!=null)task.put("export",export);return task;}
     @PostMapping("/tasks/{id}/retry") @ResponseStatus(HttpStatus.ACCEPTED)

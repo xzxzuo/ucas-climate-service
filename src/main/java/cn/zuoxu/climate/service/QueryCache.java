@@ -2,6 +2,7 @@ package cn.zuoxu.climate.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,10 +44,20 @@ public class QueryCache {
     public Result read(String kind,String parameters,Supplier<?> database) {
         if (!enabled) return new Result(database.get(),"BYPASS");
         String key=namespace+":"+revision()+":"+kind+":"+digest(parameters);
+        return cached(key,database);
+    }
+    /** The caller must check dataset access before invoking this method, including on cache hits. */
+    public Result readScoped(long dataset,long version,String kind,String parameters,Supplier<?> database) {
+        if (!enabled) return new Result(database.get(),"BYPASS");
+        // Independent from the legacy global revision and isolated from other app/test namespaces.
+        String key=namespace+":platform:"+dataset+":"+version+":"+kind+":"+digest(parameters);
+        return cached(key,database);
+    }
+    private Result cached(String key,Supplier<?> database) {
         boolean unavailable=false;
         try {
             String value=redis.opsForValue().get(key);
-            if (value!=null) { Object result=json.readValue(value,new TypeReference<Object>(){});hits.increment();return new Result(result,"HIT"); }
+            if (value!=null) { Object result=json.readerFor(new TypeReference<Object>(){}).with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS).readValue(value);hits.increment();return new Result(result,"HIT"); }
         } catch (Exception e) { failures.increment();unavailable=true;log.debug("Redis read unavailable: {}",e.getClass().getSimpleName()); }
         misses.increment();
         Object result=database.get();

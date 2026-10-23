@@ -1,6 +1,7 @@
 package cn.zuoxu.climate;
 
 import cn.zuoxu.climate.data.DatasetLoader;
+import cn.zuoxu.climate.data.PlatformQuery;
 import cn.zuoxu.climate.platform.*;
 import com.fasterxml.jackson.databind.*;
 import org.junit.jupiter.api.*;
@@ -8,7 +9,10 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.*;
 import java.net.*;
@@ -17,11 +21,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import org.apache.ibatis.executor.Executor;
+import org.apache.ibatis.mapping.MappedStatement;
+import org.apache.ibatis.plugin.*;
+import org.apache.ibatis.session.ResultHandler;
+import org.apache.ibatis.session.RowBounds;
 import static org.assertj.core.api.Assertions.*;
 
 @EnabledIfEnvironmentVariable(named="CLIMATE_IT",matches="true")
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Import(PlatformIntegrationTest.MapperTracing.class)
 class PlatformIntegrationTest {
     @TempDir static Path storage;
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry){registry.add("app.platform.directory",()->storage.toString());registry.add("app.platform.inbox-min-age-ms",()->"0");}
@@ -32,6 +43,7 @@ class PlatformIntegrationTest {
     @Autowired PlatformProcessor processor;
     @Autowired PlatformInbox inbox;
     @Autowired DatasetLoader loader;
+    @Autowired MapperTrace trace;
     final ObjectMapper json=new ObjectMapper();
     Client admin,alice,bob,viewer;
     byte[] fixture;
@@ -150,6 +162,75 @@ class PlatformIntegrationTest {
         Files.write(directory.resolve("100.csv"),new String(fixture,StandardCharsets.UTF_8).replace(",A,20,12,",",A,21,12,").getBytes(StandardCharsets.UTF_8));
         assertThat(inbox.scanOnce()).isEqualTo(1);assertThat(inbox.scanOnce()).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM platform_task WHERE dataset_id=?",Integer.class,d)).isEqualTo(2);
+    }
+
+    @Test void everyPlatformClimateReadUsesRealMyBatisAndBoundScope()throws Exception{
+        long d=cloneExample(alice);trace.calls.clear();
+        assertThat(node(alice.get("/datasets/"+d+"/stations")).size()).isEqualTo(5);
+        assertThat(alice.get("/datasets/"+d).statusCode()).isEqualTo(200);
+        assertThat(trace.ids()).contains("stations","versions");
+        for(String parameters:List.of("kind=THRESHOLDS","kind=DAILY&station=00000000001&from=1993-01-01&to=1993-01-03",
+                "kind=STATION_ANNUAL&station=00000000001&year=1993","kind=REGION_DAILY&date=1993-01-01&level=COUNTRY&metric=HTD",
+                "kind=REGION_ANNUAL&year=1993&level=COUNTRY&metric=HTD")){
+            trace.calls.clear();var response=alice.get("/datasets/"+d+"/analysis?"+parameters+"&limit=1&offset=0");
+            assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+            assertThat(node(response).path("items").size()).isEqualTo(1);
+            assertThat(node(response).path("total").asLong()).isGreaterThanOrEqualTo(1);
+            assertThat(trace.ids()).contains("hasVersion","selectPage","count");
+            assertThat(trace.calls.stream().filter(c->c.query()!=null).toList()).allSatisfy(c->{
+                assertThat(c.query().datasetId()).isEqualTo(d);assertThat(c.query().resultVersion()).isEqualTo(1);
+                assertThat(c.sql()).contains("dataset_id=?","result_version=?").doesNotContain("${");
+            });
+            if(parameters.startsWith("kind=DAILY"))assertThat(node(response).path("items").get(0).path("htd").asDouble()).isEqualTo(10);
+            if(parameters.startsWith("kind=REGION_DAILY"))assertThat(node(response).path("items").get(0).path("medianValue").asDouble()).isEqualTo(25);
+        }
+        var injected=alice.get("/datasets/"+d+"/analysis?kind=REGION_ANNUAL&year=1993&country="+URLEncoder.encode("' OR 1=1 --",StandardCharsets.UTF_8));
+        assertThat(injected.statusCode()).isEqualTo(200);assertThat(node(injected).path("total").asLong()).isZero();
+    }
+    @Test void warmCacheSkipsResultMapperButNeverBypassesAccessChecks()throws Exception{
+        long d=cloneExample(alice);String path="/datasets/"+d+"/analysis?kind=THRESHOLDS";
+        trace.calls.clear();var first=alice.get(path);assertThat(first.headers().firstValue("X-Cache")).contains("MISS");
+        assertThat(trace.ids()).contains("selectPage","count");trace.calls.clear();
+        var second=alice.get(path);assertThat(second.headers().firstValue("X-Cache")).contains("HIT");
+        assertThat(node(second)).isEqualTo(node(first));assertThat(trace.ids()).contains("hasVersion").doesNotContain("selectPage","count");
+        alice.post("/datasets/"+d+"/members",Map.of("username","bob","permission","READ"));
+        assertThat(bob.get(path).headers().firstValue("X-Cache")).contains("HIT");
+        alice.post("/datasets/"+d+"/members",Map.of("username","bob","permission","REMOVE"));trace.calls.clear();
+        assertThat(bob.get(path).statusCode()).isEqualTo(404);assertThat(trace.calls).isEmpty();
+    }
+    @Test void asynchronousExportUsesTheSameMapperForAllFiveQueryKinds()throws Exception{
+        long d=cloneExample(alice);
+        for(String kind:List.of("THRESHOLDS","DAILY","STATION_ANNUAL","REGION_DAILY","REGION_ANNUAL")){
+            var parameters=new HashMap<>(Map.of("kind",kind,"station","00000000001","from","1993-01-01","to","1993-01-03",
+                "date","1993-01-01","year","1993","version","1"));
+            String id=task(alice.post("/datasets/"+d+"/exports",parameters));trace.calls.clear();run();
+            assertThat(status(id)).as(kind+" "+jdbc.queryForObject("SELECT error_message FROM platform_task WHERE id=?",String.class,id)).isEqualTo("SUCCESS");assertThat(trace.ids()).contains("selectPage").doesNotContain("count");
+            assertThat(trace.calls.stream().filter(c->c.query()!=null).toList()).singleElement().satisfies(c->{
+                assertThat(c.query().kind().name()).isEqualTo(kind);assertThat(c.query().datasetId()).isEqualTo(d);assertThat(c.query().resultVersion()).isEqualTo(1);
+            });
+            var record=jdbc.queryForMap("SELECT * FROM platform_export WHERE task_id=?",id);
+            assertThat(((Number)record.get("row_count")).intValue()).isGreaterThan(0);
+            assertThat(alice.get("/exports/"+record.get("id")+"/download").body()).contains(d+",1,");
+        }
+    }
+
+    @TestConfiguration(proxyBeanMethods=false)
+    static class MapperTracing { @Bean MapperTrace mapperTrace(){return new MapperTrace();} }
+
+    /** A real MyBatis executor plugin, not a mock repository: records the executed mapped statement. */
+    @Intercepts(@Signature(type=Executor.class,method="query",args={MappedStatement.class,Object.class,RowBounds.class,ResultHandler.class}))
+    static class MapperTrace implements Interceptor {
+        record Call(String id,PlatformQuery query,String sql){}
+        final List<Call> calls=new CopyOnWriteArrayList<>();
+        List<String> ids(){return calls.stream().map(Call::id).toList();}
+        @Override public Object intercept(Invocation invocation)throws Throwable{
+            var statement=(MappedStatement)invocation.getArgs()[0];String prefix="cn.zuoxu.climate.data.PlatformClimateMapper.";
+            if(statement.getId().startsWith(prefix)){
+                Object input=invocation.getArgs()[1];PlatformQuery query=input instanceof Map<?,?> values&&values.containsKey("q")&&values.get("q") instanceof PlatformQuery q?q:null;
+                calls.add(new Call(statement.getId().substring(prefix.length()),query,statement.getBoundSql(input).getSql().replaceAll("\\s+"," ")));
+            }
+            return invocation.proceed();
+        }
     }
 
     class Client {
