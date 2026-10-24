@@ -21,7 +21,7 @@ python3 scripts/platform.py credentials
 
 打开 [http://127.0.0.1:8087/](http://127.0.0.1:8087/)，账号 `admin`，密码来自上述命令。初始密码只在数据库没有该账号时使用，改环境变量不会重置已有密码。重建/重启 app 后需要重新登录。
 
-首次启动依次执行：Flyway V1–V3 → 初始化样本（仅种子表为空时）→ 创建管理员与一次性只读示例 → 启动平台 Worker。之后重启会保留原数据、结果与文件，不自动覆盖示例。
+首次启动依次执行：Flyway V1–V4 → 初始化样本（仅种子表为空时）→ 创建管理员与一次性只读示例 → 启动任务调度与执行池。之后重启会保留原数据、结果与文件，不自动覆盖示例。
 
 推荐操作：
 
@@ -64,7 +64,7 @@ Java 根目录：`src/main/java/cn/zuoxu/climate/`。
 | `data/PlatformQuery`、`data/PlatformClimateMapper`、`mapper/PlatformClimateMapper.xml` | 五类动态 SQL、绑定值、分页和 count；导出共用 |
 | `service/QueryCache` | 唯一 Redis cache-aside 实现，不再依赖旧全局 revision 或 JDBC |
 | `platform/PlatformDatasets`、`PlatformAccess` | 数据集、文件暂存、共享和权限 |
-| `platform/PlatformTasks`、`PlatformWorker`、`PlatformProcessor` | 持久化接收、单线程认领、事务导入/计算、私有导出 |
+| `platform/PlatformTasks`、`PlatformWorker`、`PlatformProcessor` | 持久化接收、有界并行执行、数据集写入互斥、私有导出 |
 | `platform/PlatformInbox`、`io/FileSnapshot` | 可选稳定文件发现、有界快照、复用上传/IMPORT 路径 |
 | `platform/PlatformSecurity`、`PlatformUsers`、`security/SecurityErrors` | 唯一 Session 安全链、CSRF、角色、账号状态、JSON 错误 |
 | `bootstrap/SampleLoadRunner`、`SampleLoader`、`SampleImporter`、`SampleAnalysis` | **仅首次示例初始化**，不是另一套对外业务服务 |
@@ -92,7 +92,9 @@ STATION,DATE,NAME,TEMP,PRCP,HUMIDITY,MAX,MIN,FRSHTT,country,province,city,distri
 
 缓存 Key：`{namespace}:platform:{datasetId}:{resultVersion}:{kind}:{参数摘要}`，包括规范化筛选条件、limit/offset，默认 TTL 1,800 秒。逐日明细和导出不缓存；其他结果 cache-aside。Redis 故障查 MySQL，小数缓存读取保留 BigDecimal。每次请求先授权；缓存命中并不免除数据库权限/版本检查。
 
-任务状态：`QUEUED → RUNNING → SUCCESS / FAILED / INTERRUPTED`。IMPORT 整批事务导入、ANALYZE 事务发布结果、EXPORT 固定提交时的版本。默认单 Worker，积压上限 100；失败人工重试生成新任务。没有引入 MQ 或分布式任务框架。
+任务状态：`QUEUED → RUNNING → SUCCESS / FAILED / INTERRUPTED`。默认同时执行 **2 个不同数据集的导入/计算 + 1 个固定版本导出**；同一数据集的 IMPORT/ANALYZE 按创建顺序互斥执行。调度器跳过繁忙数据集，等待任务留在 MySQL，积压上限仍为 100；失败人工重试生成新任务。收件箱有独立调度线程，计算不会占用调度线程。没有引入 MQ 或分布式任务框架。
+
+可配置 `CLIMATE_PLATFORM_WRITE_THREADS`、`CLIMATE_PLATFORM_EXPORT_THREADS` 和 `DB_POOL_SIZE`，默认 `2 / 1 / 10`。连接池需至少 `2 * (写线程 + 导出线程) + 2`，为任务外层事务、独立进度事务及 Web 请求预留容量；不满足时启动会明确报错。升级只新增 V4 写锁表，保留 V1–V3 校验和及既有数据。完整并发模型、升级和验证方法见 [并发任务说明](docs/concurrency.md)。
 
 用户为 ADMIN、RESEARCHER、VIEWER；数据集所有者可授予 READ/WRITE。密码 BCrypt，Session 30 分钟，修改请求需要 CSRF。账号禁用、共享撤销、任务执行和文件下载都会检查资格。只有一个账号认证体系，不再接受 API Key。
 
@@ -146,4 +148,4 @@ docker compose --env-file .runtime/auth.env logs -f app
 
 旧说明已移到 `docs/archive/`，只作历史记录，不是另一个需要运行的系统。原始数据、历史 SQL 和归档文档不等于无用代码，未随本次业务清理删除。
 
-当前是本机、单实例、单 Worker 学习/科研复建。没有做全量 45 GB 导入、容量/并发压测、跨实例恢复或公网安全验收；没有真实线上流量或性能提升数字可供声称。任务持久化不等于所有故障绝不丢失。
+当前是本机、单实例、有界并行任务的学习/科研复建。并发正确性使用真实 MySQL/HTTP 测试验证；没有做全量 45 GB 导入、容量压测、跨实例恢复或公网安全验收，没有生产吞吐或性能提升数字可供声称。任务持久化不等于所有故障绝不丢失。

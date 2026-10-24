@@ -21,7 +21,7 @@ public class PlatformInbox {
             @Value("${app.platform.inbox-enabled:false}")boolean enabled,@Value("${app.platform.inbox-min-age-ms:30000}")long minAge){
         this.store=store;this.datasets=datasets;this.properties=properties;this.enabled=enabled;this.minAge=Math.max(0,minAge);
     }
-    @Scheduled(scheduler="platformTaskScheduler",fixedDelayString="${app.platform.inbox-delay-ms:10000}")
+    @Scheduled(scheduler="platformInboxScheduler",fixedDelayString="${app.platform.inbox-delay-ms:10000}")
     public void poll(){if(enabled&&properties.workerEnabled)try{scanOnce();}catch(Exception e){log.warn("Platform inbox deferred: {}",e.getClass().getSimpleName());}}
     public synchronized int scanOnce()throws Exception{
         var owners=store.jdbc.queryForList("SELECT d.id,u.id actor_id,u.username,u.display_name,u.role FROM platform_dataset d JOIN platform_user u ON u.id=d.owner_id WHERE d.is_example=FALSE AND u.enabled=TRUE AND u.role<>'VIEWER' ORDER BY d.id");

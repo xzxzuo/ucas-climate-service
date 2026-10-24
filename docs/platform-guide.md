@@ -67,7 +67,7 @@ STATION,DATE,NAME,TEMP,PRCP,HUMIDITY,MAX,MIN,FRSHTT,country,province,city,distri
 
 ### 4. 计算与版本发布
 
-导入成功后点击“重新计算指标”。生成 ANALYZE 任务，接口立即返回任务 ID；后台固定单 Worker 执行。
+导入成功后点击“重新计算指标”。生成 ANALYZE 任务，接口立即返回任务 ID；后台默认并行处理两个不同数据集，同一数据集的导入和计算互斥执行。
 
 计算口径保持原实现：1973–1992 为基准窗口；温度 P10/P90、降水 P95/P99、湿度 P5 使用 nearest-rank；1993 年起生成七幅度和六天气指标。最少基准样本数默认为 30，各变量分别排除 NULL。没有基准阈值的分析观测会计入缺失数量，不被冒充为零结果。
 
@@ -104,7 +104,7 @@ flowchart TD
   UPLOAD --> PRIVATE[私有 UUID 文件]
   UPLOAD --> QUEUE[(MySQL 持久化任务)]
   ACL --> QUEUE
-  SCHED[独立 Spring Scheduling 单 Worker] --> CLAIM[QUEUED 条件认领]
+  SCHED[轻量调度器 / 有界执行池] --> CLAIM[QUEUED 条件认领 / 数据集互斥]
   QUEUE --> CLAIM
   CLAIM --> IMPORT[事务导入 / 受控 CSV 校验]
   CLAIM --> COMPUTE[固定指标 SQL / 新版本]
@@ -142,7 +142,7 @@ Java 根目录 `src/main/java/cn/zuoxu/climate/platform/`：
 | PlatformAccess | 集中执行数据集读取、写入和管理权限检查 |
 | PlatformDatasets | 创建、示例复制、共享、上传暂存、文件去重 |
 | PlatformTasks | 接收配额、任务创建、查询、重试、阶段更新 |
-| PlatformWorker | 独立单线程调度、CAS 认领、失败/重启恢复 |
+| PlatformWorker / PlatformExecutionSettings | 轻量调度、独立写入/导出线程池、数据集占用、失败/重启恢复 |
 | PlatformProcessor | 导入事务、计算事务、固定版本导出 |
 | PlatformClimateController | 本人重点复盘的 Spring MVC 站点/分析/导出接口；认证由配套模块提供 |
 | PlatformQueries | 查询 Service：权限先于缓存、参数规范化、固定版本、调用 Mapper |
@@ -152,15 +152,15 @@ Java 根目录 `src/main/java/cn/zuoxu/climate/platform/`：
 | PlatformBootstrap | 仅首次创建管理员和只读原数据快照 |
 | PlatformController / PlatformPage | 配套管理 REST API、私有文件下载、页面入口 |
 
-从零复现的顺序：先定义数据集和权限 → 建平台表和迁移 → 复用 Observation 校验并实现事务导入 → 把原公式改为 dataset/version 作用域 SQL → 做结果指针发布 → 持久化任务和单 Worker → 查询缓存和私有导出 → 登录与前端联调 → 故障/隔离验证。不是对当年实习开发顺序的虚构。
+从零复现的顺序：先定义数据集和权限 → 建平台表和迁移 → 复用 Observation 校验并实现事务导入 → 把原公式改为 dataset/version 作用域 SQL → 做结果指针发布 → 持久化任务和有界执行池 → 查询缓存和私有导出 → 登录与前端联调 → 故障/隔离验证。不是对当年实习开发顺序的虚构。
 
 ## 五、并发、事务和恢复边界
 
-这是**单实例、单数据写 Worker**模型。平台的观测和结果只由 Worker 修改；创建数据集和复制只读样本不修改其他数据集。不要直接向平台观测表写 SQL，或同时部署多份应用。
+这是**单实例、有界并行任务**模型：默认 2 个不同数据集的写任务 + 1 个固定版本导出。相同数据集的 IMPORT/ANALYZE 保持顺序，调度器跳过忙数据集以服务其他用户。不要直接向平台观测表写 SQL，或同时部署多份应用。配置、锁与测试详见 [并发任务说明](concurrency.md)。
 
 任务通过 `UPDATE ... WHERE status='QUEUED'` 认领，更新一行才执行。所有任务积压上限为 100。接收事务使用 READ_COMMITTED，并锁定一行 queue_guard 串行化配额检查；不锁执行中任务行，不长时间持有数据集父行锁，以免外键检查使新上传等待整场计算。
 
-后台处理通过独立 Spring Bean 的 `@Transactional(rollbackFor=Exception.class,timeout=120)` 执行，不靠同类自调用触发事务。阶段计数用独立短事务更新；失败计数可能显示已经解析/尝试处理的行数，不表示这些行已成功提交。
+后台处理通过独立 Spring Bean 的 READ_COMMITTED、120 秒事务执行；V4 为每个数据集增加独立写锁行，保护修订和版本分配，不锁上传需要引用的数据集父行。阶段计数用独立短事务更新；失败计数可能显示已经解析/尝试处理的行数，不表示这些行已成功提交。
 
 进程使用数据目录文件锁阻止同目录双 Worker。它不是跨机器租约，也不能防止不同目录的两份应用错误连接同一数据库。
 
@@ -204,7 +204,7 @@ docker compose --env-file .runtime/auth.env logs -f app
 
 修改源码后：Docker 用 `up -d --build app`；本机运行先停 JVM，再打包、重启，不覆盖正在使用的 JAR。正常停止使用 `docker compose ... down`，不要加 `-v`，否则会删除 MySQL 与私有文件卷。
 
-代码升级前的源文件备份在 `.runtime/backups/before-platform-20261019.tar.gz`；它不是数据库备份。已发布的 V3 迁移不可修改，需要改结构时新增 V4。
+代码升级前的源文件备份在 `.runtime/backups/before-platform-20261019.tar.gz`；它不是数据库备份。已发布的 V1–V4 迁移不可修改，后续结构变更新增迁移。
 
 ## 八、面试应如何表述
 

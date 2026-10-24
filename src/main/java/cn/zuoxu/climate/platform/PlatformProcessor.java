@@ -11,6 +11,7 @@ import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -37,7 +38,7 @@ public class PlatformProcessor {
             @Value("${app.min-baseline-samples}")int minSamples,@Value("${app.max-import-rows}")int maxRows){
         this.store=store;this.access=access;this.tasks=tasks;this.datasets=datasets;this.queries=queries;this.properties=properties;this.json=json;this.minSamples=minSamples;this.maxRows=maxRows;
     }
-    @Transactional(rollbackFor=Exception.class,timeout=120)
+    @Transactional(isolation=Isolation.READ_COMMITTED,rollbackFor=Exception.class,timeout=120)
     public void process(String id)throws Exception{
         var task=store.one("SELECT * FROM platform_task WHERE id=? AND status='RUNNING'",id);if(task==null)return;
         long dataset=PlatformStore.number(task,"dataset_id");String type=(String)task.get("task_type");
@@ -45,8 +46,11 @@ public class PlatformProcessor {
         if(u==null||!PlatformStore.flag(u,"enabled"))throw new IllegalArgumentException("Task submitter is no longer enabled");
         var actor=new PlatformUsers.Account(PlatformStore.number(u,"id"),(String)u.get("username"),(String)u.get("display_name"),(String)u.get("role"),true);
         access.dataset(actor,dataset,!type.equals("EXPORT"));
-        // All platform data writes are serialized by the one platform worker, not by a long parent-row lock.
-        // A parent-row X lock here would block staging a new upload through its dataset foreign key.
+        // The dispatcher skips busy datasets; this database lock additionally protects version allocation.
+        // RC reads after acquiring the lock see the previous writer's committed revision/version.
+        // A dedicated child row avoids blocking new uploads through their dataset foreign key.
+        if(!type.equals("EXPORT"))store.jdbc.queryForObject(
+            "SELECT dataset_id FROM platform_dataset_write_guard WHERE dataset_id=? FOR UPDATE",Long.class,dataset);
         checkInterrupted();
         switch(type){case "IMPORT"->importFile(id,dataset,(String)task.get("file_id"));case "ANALYZE"->analyze(id,dataset);case "EXPORT"->export(id,dataset,actor,task);default->throw new IllegalArgumentException("Unknown task type");}
     }

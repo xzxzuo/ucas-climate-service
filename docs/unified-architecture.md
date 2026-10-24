@@ -11,7 +11,7 @@ flowchart TB
     SECURITY[Spring Security / Session / CSRF]
     ACCESS[PlatformAccess 数据集权限]
     TASK[PlatformTasks 持久化任务]
-    WORKER[Spring Scheduling 单 Worker]
+    WORKER[轻量调度器 / 独立写入与导出池]
   end
   subgraph CORE[重点复盘：气象查询与导出模块]
     MVC[Spring MVC: PlatformClimateController]
@@ -44,6 +44,8 @@ flowchart TB
 ```
 
 蓝色节点是本次复建中应重点掌握的查询/导出模块，不是原实习贡献的自动证明。可单独导入 Mermaid 工具的源码见 [architecture.mmd](architecture.mmd)。数据库中的 `platform_*` 前缀不是绕过 MyBatis 的标志；使用哪个框架取决于实际 Java 调用和 XML 映射。
+
+后台默认可同时执行两个不同数据集的导入/计算，以及一个固定版本导出；相同数据集写入使用 V4 专用锁行保护。完整配置与事务边界见 [并发任务说明](concurrency.md)。
 
 ## 2. 一次网页查询究竟经过哪里
 
