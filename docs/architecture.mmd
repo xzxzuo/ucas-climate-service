@@ -4,7 +4,7 @@ flowchart TB
     SECURITY[Spring Security / Session / CSRF]
     ACCESS[PlatformAccess 数据集权限]
     TASK[PlatformTasks 持久化任务]
-    WORKER[Spring Scheduling 单 Worker]
+    WORKER[轻量调度器 / 独立写入与导出池]
   end
   subgraph CORE[重点复盘：气象查询与导出模块]
     MVC[Spring MVC: PlatformClimateController]

@@ -25,6 +25,7 @@ public class PlatformBootstrap {
         if(count==0||count>200000){log.info("Example snapshot skipped: legacy observation count={}",count);return;}
         store.jdbc.queryForObject("SELECT id FROM analysis_state WHERE id=1 FOR UPDATE",Integer.class);
         long dataset=store.insert("INSERT INTO platform_dataset(name,description,owner_id,is_example,raw_revision) VALUES(?,?,?,TRUE,1)","真实气象样本 · 只读示例","旧查询服务的一次性只读快照；三个站点、非连续分析年份，不代表完整全球数据。",PlatformStore.number(admin,"id"));
+        store.jdbc.update("INSERT INTO platform_dataset_write_guard(dataset_id) VALUES(?)",dataset);
         store.jdbc.update("INSERT INTO platform_raw_observation SELECT ?,r.* FROM raw_observation r",dataset);
         var state=store.one("SELECT * FROM analysis_state WHERE id=1");
         for(String table:PlatformDatasets.RESULTS)store.jdbc.update("INSERT INTO platform_"+table+" SELECT ?,1,t.* FROM "+table+" t",dataset);

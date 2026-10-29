@@ -3,6 +3,11 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import static org.assertj.core.api.Assertions.*;
 class PlatformUnitTest {
+    @Test void executionLimitsReserveDatabaseCapacity(){
+        assertThat(new PlatformExecutionSettings(2,1,10).writeThreads()).isEqualTo(2);
+        assertThatThrownBy(()->new PlatformExecutionSettings(0,1,10)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(()->new PlatformExecutionSettings(2,1,6)).isInstanceOf(IllegalArgumentException.class);
+    }
     @Test void csvNeutralizesTextFormulasButPreservesNumericNegatives(){
         assertThat(PlatformProcessor.csvCell("=SUM(A1)")).isEqualTo("'=SUM(A1)");assertThat(PlatformProcessor.csvCell("@evil")).isEqualTo("'@evil");
         assertThat(PlatformProcessor.csvCell(new BigDecimal("-10"))).isEqualTo(new BigDecimal("-10"));assertThat(PlatformProcessor.csvCell(null)).isNull();

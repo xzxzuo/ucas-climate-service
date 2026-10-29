@@ -35,6 +35,7 @@ public class PlatformDatasets {
         if(name==null||name.isBlank()||name.length()>120||description==null||description.length()>1000)throw new IllegalArgumentException("Name is required (max 120); description max 1000");
         if(store.jdbc.queryForObject("SELECT COUNT(*) FROM platform_dataset WHERE owner_id=?",Integer.class,user.id())>=30)throw new ResponseStatusException(HttpStatus.CONFLICT,"Local demo limit: 30 datasets per owner");
         long id=store.insert("INSERT INTO platform_dataset(name,description,owner_id) VALUES(?,?,?)",name.strip(),description.strip(),user.id());
+        store.jdbc.update("INSERT INTO platform_dataset_write_guard(dataset_id) VALUES(?)",id);
         try{Files.createDirectories(properties.directory.resolve("inbox").resolve(Long.toString(id)));}catch(IOException e){throw new IllegalStateException("Cannot create dataset inbox",e);}
         store.audit(user.id(),id,"CREATE_DATASET",Long.toString(id));return access.dataset(user,id,false);
     }

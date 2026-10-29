@@ -20,7 +20,7 @@ spring:
     username: ${DB_USER:climate}
     password: ${DB_PASSWORD:climate-local}
     hikari:
-      maximum-pool-size: 6
+      maximum-pool-size: ${DB_POOL_SIZE:10}
       connection-init-sql: SET time_zone = '+00:00'
   data:
     redis:
@@ -51,6 +51,8 @@ app:
     admin-password: ${CLIMATE_PLATFORM_ADMIN_PASSWORD:}
     directory: ${CLIMATE_PLATFORM_DIRECTORY:.runtime/platform}
     worker-enabled: ${CLIMATE_PLATFORM_WORKER_ENABLED:true}
+    write-threads: ${CLIMATE_PLATFORM_WRITE_THREADS:2}
+    export-threads: ${CLIMATE_PLATFORM_EXPORT_THREADS:1}
     poll-delay-ms: 750
     inbox-enabled: ${CLIMATE_PLATFORM_INBOX_ENABLED:false}
     inbox-min-age-ms: ${CLIMATE_PLATFORM_INBOX_MIN_AGE_MS:30000}
@@ -63,4 +65,4 @@ logging:
   file:
     name: .runtime/logs/climate.log
   pattern:
-    console: "%d{HH:mm:ss.SSS} %-5level [%X{requestId:-}] %logger{28} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] [%X{requestId:-}] %logger{28} - %msg%n"

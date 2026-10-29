@@ -64,7 +64,10 @@ class PlatformIntegrationTest {
     String upload(Client client,long dataset,byte[] data)throws Exception{var response=client.upload(dataset,"observations.csv",data);assertThat(response.statusCode()).isEqualTo(202);return node(response).path("task").path("id").asText();}
     JsonNode node(HttpResponse<String> response)throws Exception{return json.readTree(response.body());}
     String status(String id){return jdbc.queryForObject("SELECT status FROM platform_task WHERE id=?",String.class,id);}
-    void run(){assertThat(worker.runOnce()).isTrue();}
+    void run(){
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(5)).until(worker::runOnce);
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(20)).until(()->worker.activeTaskCount()==0);
+    }
 
     @Test void cookieSessionAndCsrfProtectThePlatform()throws Exception{
         Client anonymous=new Client();assertThat(anonymous.get("/me").statusCode()).isEqualTo(401);
